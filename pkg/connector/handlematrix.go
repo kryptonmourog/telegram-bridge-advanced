@@ -515,6 +515,9 @@ func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2
 	if err != nil {
 		return nil, err
 	}
+	if pressed, err := tc.maybePressButtonByReply(ctx, msg); pressed {
+		return nil, err
+	}
 
 	peer, topicID, err := tc.inputPeerForPortalID(ctx, msg.Portal.ID)
 	if err != nil {
@@ -944,6 +947,9 @@ func (tc *TelegramClient) PreHandleMatrixReaction(ctx context.Context, msg *brid
 		Str("key", msg.Content.RelatesTo.Key).
 		Logger()
 	var resp bridgev2.MatrixReactionPreResponse
+	if pressed, err := tc.maybePressButtonByReaction(log.WithContext(ctx), msg); pressed {
+		return resp, err
+	}
 
 	var maxReactions int
 	maxReactions, err := tc.getReactionLimit(ctx, tc.userID)

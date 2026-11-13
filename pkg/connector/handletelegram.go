@@ -307,6 +307,9 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 				CreatePortal: true,
 				Timestamp:    time.Unix(int64(msg.Date), 0),
 				StreamOrder:  int64(msg.GetID()),
+				PostHandleFunc: func(ctx context.Context, portal *bridgev2.Portal) {
+					tc.syncButtonReactions(ctx, portal, msgID)
+				},
 			},
 			ID:                 msgID,
 			Data:               msg,
@@ -1268,6 +1271,9 @@ func (tc *TelegramClient) onMessageEdit(ctx context.Context, update IGetMessage)
 			Sender:    sender,
 			PortalKey: portalKey,
 			Timestamp: time.Unix(int64(msg.EditDate), 0),
+			PostHandleFunc: func(ctx context.Context, portal *bridgev2.Portal) {
+				tc.syncButtonReactions(ctx, portal, ids.GetMessageIDFromMessage(msg))
+			},
 		},
 		ID:            ids.GetMessageIDFromMessage(msg),
 		TargetMessage: ids.GetMessageIDFromMessage(msg),
@@ -1291,6 +1297,8 @@ func (tc *TelegramClient) onMessageEdit(ctx context.Context, update IGetMessage)
 				}
 			}
 
+			// the reactions under the message stay through edits, syncButtonReactions adjusts them
+			convertedPart.DBMetadata.(*MessageMetadata).ButtonReactions = existingPart.Metadata.(*MessageMetadata).ButtonReactions
 			if bytes.Equal(existingPart.Metadata.(*MessageMetadata).ContentHash, convertedPart.DBMetadata.(*MessageMetadata).ContentHash) {
 				return nil, fmt.Errorf("%w (content hash didn't change)", bridgev2.ErrIgnoringRemoteEvent)
 			}

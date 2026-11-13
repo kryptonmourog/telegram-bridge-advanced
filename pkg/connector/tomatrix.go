@@ -255,10 +255,13 @@ func (tc *TelegramClient) convertToMatrix(
 		cm.Parts[0].Content.BeeperPerMessageProfile = perMessageProfile
 		cm.Parts[0].Content.AddPerMessageProfileFallback()
 	}
+	buttons, buttonsHash := tc.addButtons(ctx, msg, cm.Parts[0])
+	hasher.Write(buttonsHash)
 	cm.Parts[0].DBMetadata = &MessageMetadata{
 		ContentHash: hasher.Sum(nil),
 		ContentURI:  contentURI,
 		ViewLimited: cm.Parts[0].Content.BeeperViewLimited,
+		Buttons:     buttons,
 	}
 	for _, part := range cm.Parts {
 		if part.Type != event.EventUnstablePollStart {

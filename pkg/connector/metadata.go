@@ -97,6 +97,10 @@ type MessageMetadata struct {
 	ContentHash []byte                        `json:"content_hash,omitempty"`
 	ContentURI  id.ContentURIString           `json:"content_uri,omitempty"`
 	Poll        *PollMetadata                 `json:"poll,omitempty"`
+	// Buttons is the bot keyboard of the message, see buttons.go.
+	Buttons *MessageButtons `json:"buttons,omitempty"`
+	// ButtonReactions are the number reactions the bridge bot put under the message, by key.
+	ButtonReactions map[string]id.EventID `json:"button_reactions,omitempty"`
 }
 
 type PollMetadata struct {
