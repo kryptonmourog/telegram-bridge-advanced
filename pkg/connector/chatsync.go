@@ -292,6 +292,10 @@ func newDialogPage(meta tg.ModifiedMessagesDialogs) *dialogPage {
 func (tc *TelegramClient) handleDialog(ctx context.Context, d tg.DialogClass, page *dialogPage, allowCreate bool) error {
 	switch dialog := d.(type) {
 	case *tg.Dialog:
+		tc.folderSpaces.noteDialogFolder(dialog)
+		if tc.folderSpaces.skipArchivedPeer(dialog.Peer) {
+			return nil
+		}
 		return tc.syncNormalDialog(ctx, dialog, allowCreate, page.users, page.chats, page.messages)
 	case *tg.DialogCommunity:
 		return tc.syncCommunityDialog(ctx, dialog, page.chats)

@@ -290,6 +290,10 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 
 		topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
 		portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
+		if tc.folderSpaces.skipArchivedPeer(msg.PeerID) {
+			log.Debug().Int("message_id", msg.ID).Msg("Ignoring message in archived chat, the archive isn't bridged")
+			return nil
+		}
 		if tc.createRoomWithBackfill(ctx, portalKey, msg) {
 			log.Debug().Int("message_id", msg.ID).Msg("Creating room with backfill for new message")
 			return nil
@@ -1140,6 +1144,8 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 	case *tg.UpdateDialogFilter, *tg.UpdateDialogFilters, *tg.UpdateDialogFilterOrder:
 		tc.folderSpaces.foldersChanged()
 		return nil
+	case *tg.UpdateFolderPeers:
+		return tc.onFolderPeers(ctx, update)
 	case *tg.UpdateChatDefaultBannedRights:
 		return tc.onChatDefaultBannedRights(ctx, e, update)
 	case *tg.UpdatePeerBlocked:

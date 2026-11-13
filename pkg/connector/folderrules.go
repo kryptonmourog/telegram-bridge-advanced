@@ -41,9 +41,10 @@ const (
 // folderChat describes a chat for matching against folder rules.
 type folderChat struct {
 	// PeerID identifies the Telegram chat without topic or receiver, see folderPeerID.
-	PeerID  string
-	Kind    folderChatKind
-	Contact bool
+	PeerID   string
+	Kind     folderChatKind
+	Contact  bool
+	Archived bool
 }
 
 // folderDef is a Telegram chat folder (dialogFilter or dialogFilterChatlist).
@@ -59,6 +60,8 @@ type folderDef struct {
 	Groups      bool
 	Broadcasts  bool
 	Bots        bool
+	// ExcludeArchived is the "exclude archived" rule.
+	ExcludeArchived bool
 
 	// Include contains pinned and included chats, Exclude the excluded ones (folderPeerID format).
 	Include map[string]struct{}
@@ -68,7 +71,22 @@ type folderDef struct {
 // folderEntry is one entry of the folder tab list: either "All chats" or a folder.
 type folderEntry struct {
 	AllChats bool
-	Folder   *folderDef
+	// Archive is the archive sub-space, added when archived chats are bridged.
+	Archive bool
+	Folder  *folderDef
+}
+
+// Contains reports whether the chat belongs to the entry. "All chats" doesn't include archived
+// chats, like in Telegram.
+func (e folderEntry) Contains(c folderChat) bool {
+	switch {
+	case e.AllChats:
+		return !c.Archived
+	case e.Archive:
+		return c.Archived
+	default:
+		return e.Folder.Contains(c)
+	}
 }
 
 // folderPeerID returns the peer identifier used for folder matching ("user:123", "chat:123", "channel:123").
@@ -131,16 +149,17 @@ func buildFolderEntries(filters []tg.DialogFilterClass, selfID int64) []folderEn
 			}
 		case *tg.DialogFilter:
 			entries = append(entries, folderEntry{Folder: &folderDef{
-				ID:          filter.ID,
-				Title:       strings.TrimSpace(filter.Title.Text),
-				Emoticon:    filter.Emoticon,
-				Contacts:    filter.Contacts,
-				NonContacts: filter.NonContacts,
-				Groups:      filter.Groups,
-				Broadcasts:  filter.Broadcasts,
-				Bots:        filter.Bots,
-				Include:     folderPeerSet(selfID, filter.PinnedPeers, filter.IncludePeers),
-				Exclude:     folderPeerSet(selfID, filter.ExcludePeers),
+				ID:              filter.ID,
+				Title:           strings.TrimSpace(filter.Title.Text),
+				Emoticon:        filter.Emoticon,
+				Contacts:        filter.Contacts,
+				NonContacts:     filter.NonContacts,
+				Groups:          filter.Groups,
+				Broadcasts:      filter.Broadcasts,
+				Bots:            filter.Bots,
+				ExcludeArchived: filter.ExcludeArchived,
+				Include:         folderPeerSet(selfID, filter.PinnedPeers, filter.IncludePeers),
+				Exclude:         folderPeerSet(selfID, filter.ExcludePeers),
 			}})
 		case *tg.DialogFilterChatlist:
 			entries = append(entries, folderEntry{Folder: &folderDef{
@@ -160,8 +179,8 @@ func buildFolderEntries(filters []tg.DialogFilterClass, selfID int64) []folderEn
 }
 
 // Contains reports whether the chat belongs to the folder. Pinned and included chats are always in,
-// excluded ones never; otherwise the type rules decide. The "exclude muted", "exclude read" and
-// "exclude archived" rules are intentionally not evaluated (archived chats aren't bridged yet).
+// excluded ones never; otherwise the "exclude archived" and type rules decide. The "exclude muted"
+// and "exclude read" rules are intentionally not evaluated.
 // Saved Messages count as a contact, like in the official clients.
 func (f *folderDef) Contains(c folderChat) bool {
 	if _, ok := f.Include[c.PeerID]; ok {
@@ -170,7 +189,7 @@ func (f *folderDef) Contains(c folderChat) bool {
 	if _, ok := f.Exclude[c.PeerID]; ok {
 		return false
 	}
-	if f.IsChatlist {
+	if f.IsChatlist || (c.Archived && f.ExcludeArchived) {
 		return false
 	}
 	switch c.Kind {

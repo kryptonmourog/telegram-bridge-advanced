@@ -59,6 +59,14 @@ type FolderSpacesMetadata struct {
 	RootChildren map[id.RoomID]string `json:"root_children,omitempty"`
 	// Children are the rooms linked from each sub-space.
 	Children map[id.RoomID][]id.RoomID `json:"children,omitempty"`
+
+	// ArchiveEnabled is set with `archive on`: archived chats are bridged into the ArchiveSpace.
+	ArchiveEnabled bool      `json:"archive_enabled,omitempty"`
+	ArchiveSpace   id.RoomID `json:"archive_space,omitempty"`
+	// Archived are the archived chats (folderPeerID format), as last known.
+	Archived []string `json:"archived,omitempty"`
+	// LeftRooms are rooms of archived chats the user was made to leave while the archive is off.
+	LeftRooms []id.RoomID `json:"left_rooms,omitempty"`
 }
 
 func (m *FolderSpacesMetadata) clone() *FolderSpacesMetadata {
@@ -72,6 +80,11 @@ func (m *FolderSpacesMetadata) clone() *FolderSpacesMetadata {
 		Names:        maps.Clone(m.Names),
 		RootChildren: maps.Clone(m.RootChildren),
 		Children:     make(map[id.RoomID][]id.RoomID, len(m.Children)),
+
+		ArchiveEnabled: m.ArchiveEnabled,
+		ArchiveSpace:   m.ArchiveSpace,
+		Archived:       slices.Clone(m.Archived),
+		LeftRooms:      slices.Clone(m.LeftRooms),
 	}
 	for space, children := range m.Children {
 		out.Children[space] = slices.Clone(children)
@@ -84,11 +97,15 @@ var folderSpaceStrings = map[string]map[string]string{
 		"all_chats":       "All chats",
 		"all_chats_topic": "All your bridged Telegram chats",
 		"folder_topic":    "Telegram folder",
+		"archive":         "🗄 Archive",
+		"archive_topic":   "Archived Telegram chats",
 	},
 	"ru": {
 		"all_chats":       "Все чаты",
 		"all_chats_topic": "Все ваши чаты Telegram, перенесённые в Matrix",
 		"folder_topic":    "Папка Telegram",
+		"archive":         "🗄 Архив",
+		"archive_topic":   "Архивные чаты Telegram",
 	},
 }
 
@@ -128,6 +145,8 @@ type folderSpaceManager struct {
 	rootStateChecked bool
 	// isBot caches whether a Telegram user is a bot (ghosts don't reliably store it). Guarded by lock.
 	isBot map[int64]bool
+	// archive tracks the archived chats, see archive.go.
+	archive archiveSet
 	// favouriteTagged holds pinned rooms already tagged as favourite in this run. Guarded by lock.
 	favouriteTagged map[id.RoomID]struct{}
 
@@ -252,8 +271,10 @@ func (fs *folderSpaceManager) deleteSubspaces(ctx context.Context) {
 		return
 	}
 	rooms := slices.Collect(maps.Values(meta.Folders))
-	if meta.AllChats != "" {
-		rooms = append(rooms, meta.AllChats)
+	for _, room := range []id.RoomID{meta.AllChats, meta.ArchiveSpace} {
+		if room != "" {
+			rooms = append(rooms, room)
+		}
 	}
 	for _, room := range rooms {
 		if err := fs.tc.main.Bridge.Bot.DeleteRoom(ctx, room, false); err != nil {
@@ -291,6 +312,20 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 	}
 	lang := fs.language()
 	meta := tc.metadata.FolderSpaces.clone()
+	fs.archive.load(meta.Archived)
+	if !fs.archive.fetched {
+		if err = fs.fetchArchived(ctx); err != nil {
+			log.Warn().Err(err).Msg("Failed to fetch archived chats, using the last known list")
+		}
+	}
+	archiveEnabled := meta.ArchiveEnabled
+	if archiveEnabled {
+		entries = append(slices.Clone(entries), folderEntry{Archive: true})
+	}
+	left := make(map[id.RoomID]struct{}, len(meta.LeftRooms))
+	for _, room := range meta.LeftRooms {
+		left[room] = struct{}{}
+	}
 	if meta.Folders == nil {
 		meta.Folders = map[int]id.RoomID{}
 	}
@@ -309,10 +344,14 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 	for i, entry := range entries {
 		var name, topic, key string
 		var room id.RoomID
-		if entry.AllChats {
+		switch {
+		case entry.AllChats:
 			name, topic, key = folderSpaceText(lang, "all_chats"), folderSpaceText(lang, "all_chats_topic"), "__folder_space__:all"
 			room = meta.AllChats
-		} else {
+		case entry.Archive:
+			name, topic, key = folderSpaceText(lang, "archive"), folderSpaceText(lang, "archive_topic"), "__folder_space__:archive"
+			room = meta.ArchiveSpace
+		default:
 			folderIDs[entry.Folder.ID] = struct{}{}
 			name, topic, key = entry.Folder.SpaceName(), folderSpaceText(lang, "folder_topic"), fmt.Sprintf("__folder_space__:%d", entry.Folder.ID)
 			room = meta.Folders[entry.Folder.ID]
@@ -329,9 +368,12 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 			}
 		}
 		meta.Names[room] = name
-		if entry.AllChats {
+		switch {
+		case entry.AllChats:
 			meta.AllChats = room
-		} else {
+		case entry.Archive:
+			meta.ArchiveSpace = room
+		default:
 			meta.Folders[entry.Folder.ID] = room
 		}
 		subspaceOf[i] = room
@@ -349,6 +391,15 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		delete(meta.Folders, folderID)
 		delete(meta.Names, room)
 		delete(meta.Children, room)
+		stats.deleted++
+	}
+	if !archiveEnabled && meta.ArchiveSpace != "" {
+		if err = tc.main.Bridge.Bot.DeleteRoom(ctx, meta.ArchiveSpace, false); err != nil {
+			log.Err(err).Stringer("space_id", meta.ArchiveSpace).Msg("Failed to delete archive sub-space")
+		}
+		delete(meta.Names, meta.ArchiveSpace)
+		delete(meta.Children, meta.ArchiveSpace)
+		meta.ArchiveSpace = ""
 		stats.deleted++
 	}
 
@@ -413,6 +464,15 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 				return fmt.Errorf("failed to save user portal: %w", err)
 			}
 		}
+		// Rooms of archived chats are hidden from the user while the archive is off.
+		archived := false
+		if peerID, err := folderPeerIDFromPortalID(portal.ID); err == nil {
+			archived = fs.archive.contains(peerID)
+		}
+		fs.setArchiveMembership(ctx, portal, archived && !archiveEnabled, left)
+		if archived && !archiveEnabled {
+			continue
+		}
 		// Forum topics live in the forum's own space; the forum is placed instead.
 		if portal.ParentKey.ID != "" {
 			continue
@@ -421,8 +481,9 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		if !ok {
 			continue
 		}
+		chat.Archived = archived
 		for i, entry := range entries {
-			if entry.AllChats || entry.Folder.Contains(chat) {
+			if entry.Contains(chat) {
 				want[subspaceOf[i]][portal.MXID] = struct{}{}
 			}
 		}
@@ -456,6 +517,8 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		newChildren[space] = slices.Sorted(maps.Keys(rooms))
 	}
 	meta.Children = newChildren
+	meta.Archived = fs.archive.list()
+	meta.LeftRooms = slices.Sorted(maps.Keys(left))
 
 	tc.metadata.FolderSpaces = meta
 	if err = ul.Save(ctx); err != nil {

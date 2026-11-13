@@ -214,3 +214,27 @@ func TestFormatSponsoredMessage(t *testing.T) {
 	assert.Contains(t, recommended.Body, "Recommended by Telegram", "unknown language falls back to English")
 	assert.NotContains(t, recommended.Body, "Advertiser")
 }
+
+func TestArchiveRules(t *testing.T) {
+	archivedGroup := chatBasicGroup
+	archivedGroup.Archived = true
+
+	assert.True(t, folderEntry{AllChats: true}.Contains(chatBasicGroup))
+	assert.False(t, folderEntry{AllChats: true}.Contains(archivedGroup), "All chats doesn't include the archive")
+	assert.True(t, folderEntry{Archive: true}.Contains(archivedGroup))
+	assert.False(t, folderEntry{Archive: true}.Contains(chatBasicGroup))
+
+	groups := folderDef{Groups: true}
+	assert.True(t, groups.Contains(archivedGroup), "folders without the rule include archived chats")
+	groups.ExcludeArchived = true
+	assert.False(t, groups.Contains(archivedGroup))
+	groups.Include = map[string]struct{}{archivedGroup.PeerID: {}}
+	assert.True(t, groups.Contains(archivedGroup), "explicitly included chats stay")
+
+	pt, chatID, err := parseFolderPeerID("channel:123")
+	require.NoError(t, err)
+	assert.Equal(t, ids.PeerTypeChannel, pt)
+	assert.EqualValues(t, 123, chatID)
+	_, _, err = parseFolderPeerID("bad")
+	assert.Error(t, err)
+}

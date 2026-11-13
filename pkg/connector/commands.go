@@ -65,6 +65,63 @@ func fnSyncChats(ce *commands.Event) {
 	}
 }
 
+var cmdArchive = &commands.FullHandler{
+	Func: fnArchive,
+	Name: "archive",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "Show whether archived Telegram chats are bridged, or turn bridging them on or off",
+		Args:        "[`on` | `off`]",
+	},
+	RequiresLogin: true,
+}
+
+func fnArchive(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return
+	}
+	client := login.Client.(*TelegramClient)
+	fs := client.folderSpaces
+	if !fs.enabled() {
+		ce.Reply("The archive setting needs folder spaces, which are disabled. Archived chats are bridged like any other chat.")
+		return
+	}
+	var sub string
+	if len(ce.Args) > 0 {
+		sub = strings.ToLower(ce.Args[0])
+	}
+	switch sub {
+	case "":
+		state := "off: archived chats aren't bridged and their rooms are hidden"
+		if fs.archiveEnabled() {
+			state = "on: archived chats are bridged into the archive space"
+		}
+		count := 0
+		if meta := client.metadata.FolderSpaces; meta != nil {
+			count = len(meta.Archived)
+		}
+		ce.Reply("Archive is %s.\nArchived chats: %d. Use `archive on` or `archive off` to change it.", state, count)
+	case "on":
+		ce.Reply("Bridging archived chats, this may take a while...")
+		created, err := fs.SetArchive(ce.Ctx, true)
+		if err != nil {
+			ce.Reply("Failed to turn the archive on: %v", err)
+			return
+		}
+		ce.Reply("Archive is on. Rooms of archived chats are back in the archive space and catching up; %d new rooms are being created.", created)
+	case "off":
+		if _, err := fs.SetArchive(ce.Ctx, false); err != nil {
+			ce.Reply("Failed to turn the archive off: %v", err)
+			return
+		}
+		ce.Reply("Archive is off. You left the rooms of archived chats; they're kept, so `archive on` only catches up on new messages.")
+	default:
+		ce.Reply("Usage: `archive` (status), `archive on`, `archive off`")
+	}
+}
+
 var cmdFolders = &commands.FullHandler{
 	Func: fnFolders,
 	Name: "folders",
