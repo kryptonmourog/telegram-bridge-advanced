@@ -101,6 +101,7 @@ type TelegramConfig struct {
 	ImageAsFilePixels                    int                 `yaml:"image_as_file_pixels"`
 	DisableViewOnce                      bool                `yaml:"disable_view_once"`
 	VideoURLPreviewAsFile                bool                `yaml:"video_url_preview_as_file"`
+	MatrixRequestTimeout                 string              `yaml:"matrix_request_timeout"`
 	BridgeCommunities                    bool                `yaml:"bridge_communities"`
 	ExtEvPolls                           bool                `yaml:"extev_polls"`
 	DisplaynameTemplate                  string              `yaml:"displayname_template"`
@@ -203,6 +204,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Int, "image_as_file_pixels")
 	helper.Copy(up.Bool, "disable_view_once")
 	helper.Copy(up.Bool, "video_url_preview_as_file")
+	helper.Copy(up.Str|up.Null, "matrix_request_timeout")
 	helper.Copy(up.Bool, "bridge_communities")
 	helper.Copy(up.Bool, "extev_polls")
 	helper.Copy(up.Str, "displayname_template")

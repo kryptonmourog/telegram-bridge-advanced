@@ -18,10 +18,14 @@ package connector
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"time"
 
 	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/commands"
+	"maunium.net/go/mautrix/bridgev2/matrix"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector/store"
 )
@@ -45,7 +49,42 @@ func (tc *TelegramConnector) Init(bridge *bridgev2.Bridge) {
 }
 
 func (tc *TelegramConnector) Start(ctx context.Context) error {
+	if err := tc.applyMatrixRequestTimeout(); err != nil {
+		return err
+	}
 	return tc.Store.Upgrade(ctx)
+}
+
+// matrixResponseTimeout is how long to wait for the homeserver's response once a request has been
+// sent, when matrix_request_timeout is set. It's the same as mautrix-go's default total timeout.
+const matrixResponseTimeout = 3 * time.Minute
+
+// applyMatrixRequestTimeout replaces the total timeout of the appservice HTTP client, which every
+// Matrix client of the bridge shares, with matrix_request_timeout, and limits the wait for response
+// headers instead. That lets large uploads take as long as the link needs.
+func (tc *TelegramConnector) applyMatrixRequestTimeout() error {
+	if tc.Config.MatrixRequestTimeout == "" {
+		return nil
+	}
+	timeout, err := time.ParseDuration(tc.Config.MatrixRequestTimeout)
+	if err != nil {
+		return fmt.Errorf("invalid matrix_request_timeout: %w", err)
+	}
+	mc, ok := tc.Bridge.Matrix.(*matrix.Connector)
+	if !ok || mc.AS == nil || mc.AS.HTTPClient == nil {
+		return nil
+	}
+	client := mc.AS.HTTPClient
+	if client.Transport == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.ResponseHeaderTimeout = matrixResponseTimeout
+		client.Transport = transport
+	} else if transport, ok := client.Transport.(*http.Transport); ok {
+		transport.ResponseHeaderTimeout = matrixResponseTimeout
+	}
+	client.Timeout = timeout
+	tc.Bridge.Log.Info().Stringer("timeout", timeout).Msg("Set total timeout of homeserver requests")
+	return nil
 }
 
 func (tc *TelegramConnector) PreSplitPortalMigrate(ctx context.Context) error {
