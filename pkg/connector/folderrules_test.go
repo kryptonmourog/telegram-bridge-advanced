@@ -281,3 +281,11 @@ func TestShouldSkipMedia(t *testing.T) {
 	assert.True(t, c.ShouldSkipMedia("channel:2", "2.7", 1))
 	assert.False(t, c.ShouldSkipMedia("channel:2", "2.8", 1))
 }
+
+func TestUnsupportedMessagePart(t *testing.T) {
+	part := unsupportedMessagePart(&tg.Message{ID: 3, PeerID: &tg.PeerUser{UserID: 9}}, "ru")
+	assert.Contains(t, part.Content.Body, "Это сообщение нового типа")
+	assert.NotContains(t, part.Content.Body, "Mautrix-Telegram")
+	en := unsupportedMessagePart(&tg.Message{ID: 3, PeerID: &tg.PeerChannel{ChannelID: 5}}, "en")
+	assert.Contains(t, en.Content.Body, "Open it in Telegram: https://t.me/c/5/3")
+}

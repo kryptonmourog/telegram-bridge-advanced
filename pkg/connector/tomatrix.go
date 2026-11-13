@@ -101,16 +101,7 @@ func (tc *TelegramClient) mediaToMatrix(
 		// Already handled in the message handling
 		return nil, nil, nil
 	case tg.MessageMediaUnsupportedTypeID:
-		return &bridgev2.ConvertedMessagePart{
-			Type: event.EventMessage,
-			Content: &event.MessageEventContent{
-				MsgType: event.MsgNotice,
-				Body:    "This message is not supported on your version of Mautrix-Telegram. Please check https://github.com/mautrix/telegram or ask your bridge administrator about possible updates.",
-			},
-			Extra: map[string]any{
-				"fi.mau.telegram.unsupported": true,
-			},
-		}, nil, nil
+		return unsupportedMessagePart(msg, tc.folderSpaces.language()), nil, nil
 	case tg.MessageMediaPhotoTypeID, tg.MessageMediaDocumentTypeID:
 		converted, disappearingSetting := tc.convertMediaRequiringUpload(ctx, portal, intent, msg, media, true)
 		return converted, disappearingSetting, mediaHashID(ctx, media)
@@ -355,6 +346,8 @@ var mediaFailureStrings = map[string]map[string]string{
 			"For the server admin: the limit is max_upload_size in Synapse.",
 		"failed":  "⚠️ Media wasn't bridged from Telegram: %s.",
 		"skipped": "📎 File “%s” (%s) isn't bridged by the bridge admin's choice.",
+		"unsupported": "🧩 This is a new kind of Telegram message that the bridge can't show yet " +
+			"(for example, an interactive bot widget). Open it in the Telegram app.",
 		"no_space": "📎 File “%s” (%s) wasn't bridged: the bridge server is out of disk space for it. " +
 			"For the bridge admin: the bridge keeps large files in a temporary file while uploading them, it needs more free disk space.",
 		"open":     "Open it in Telegram",
@@ -366,6 +359,8 @@ var mediaFailureStrings = map[string]map[string]string{
 			"Администратору: лимит задаётся параметром max_upload_size в Synapse.",
 		"failed":  "⚠️ Медиа не перенесено из Telegram: %s.",
 		"skipped": "📎 Файл «%s» (%s) не переносится по решению администратора моста.",
+		"unsupported": "🧩 Это сообщение нового типа, которое мост пока не умеет показывать " +
+			"(например, интерактивный виджет бота). Откройте его в приложении Telegram.",
 		"no_space": "📎 Файл «%s» (%s) не перенесён: на сервере моста не хватает места на диске. " +
 			"Администратору моста: большие файлы мост держит во временном файле, пока загружает, — нужно больше свободного места.",
 		"open":     "Открыть в Telegram",
@@ -389,6 +384,30 @@ func formatFileSize(size int64) string {
 		return fmt.Sprintf("%.0f MB", float64(size)/1024/1024)
 	default:
 		return fmt.Sprintf("%.0f KB", float64(size)/1024)
+	}
+}
+
+// unsupportedMessagePart replaces media of a type this bridge's Telegram API layer doesn't know,
+// which Telegram sends as messageMediaUnsupported (e.g. interactive bot widgets of newer layers).
+func unsupportedMessagePart(msg *tg.Message, lang string) *bridgev2.ConvertedMessagePart {
+	body := mediaFailureText(lang, "unsupported")
+	formatted := html.EscapeString(body)
+	if link := getMessageLink(msg); link != "" {
+		open := mediaFailureText(lang, "open")
+		body += " " + open + ": " + link
+		formatted += fmt.Sprintf(` <a href="%s">%s</a>`, html.EscapeString(link), html.EscapeString(open))
+	}
+	return &bridgev2.ConvertedMessagePart{
+		Type: event.EventMessage,
+		Content: &event.MessageEventContent{
+			MsgType:       event.MsgNotice,
+			Body:          body,
+			Format:        event.FormatHTML,
+			FormattedBody: formatted,
+		},
+		Extra: map[string]any{
+			"fi.mau.telegram.unsupported": true,
+		},
 	}
 }
 
