@@ -353,7 +353,8 @@ var mediaFailureStrings = map[string]map[string]string{
 	"en": {
 		"too_large": "📎 File “%s” (%s) wasn't bridged: it's larger than this Matrix server accepts (%s). " +
 			"For the server admin: the limit is max_upload_size in Synapse.",
-		"failed": "⚠️ Media wasn't bridged from Telegram: %s.",
+		"failed":  "⚠️ Media wasn't bridged from Telegram: %s.",
+		"skipped": "📎 File “%s” (%s) isn't bridged by the bridge admin's choice.",
 		"no_space": "📎 File “%s” (%s) wasn't bridged: the bridge server is out of disk space for it. " +
 			"For the bridge admin: the bridge keeps large files in a temporary file while uploading them, it needs more free disk space.",
 		"open":     "Open it in Telegram",
@@ -363,7 +364,8 @@ var mediaFailureStrings = map[string]map[string]string{
 	"ru": {
 		"too_large": "📎 Файл «%s» (%s) не перенесён: он больше, чем принимает этот сервер Matrix (%s). " +
 			"Администратору: лимит задаётся параметром max_upload_size в Synapse.",
-		"failed": "⚠️ Медиа не перенесено из Telegram: %s.",
+		"failed":  "⚠️ Медиа не перенесено из Telegram: %s.",
+		"skipped": "📎 Файл «%s» (%s) не переносится по решению администратора моста.",
 		"no_space": "📎 Файл «%s» (%s) не перенесён: на сервере моста не хватает места на диске. " +
 			"Администратору моста: большие файлы мост держит во временном файле, пока загружает, — нужно больше свободного места.",
 		"open":     "Открыть в Telegram",
@@ -387,6 +389,33 @@ func formatFileSize(size int64) string {
 		return fmt.Sprintf("%.0f MB", float64(size)/1024/1024)
 	default:
 		return fmt.Sprintf("%.0f KB", float64(size)/1024)
+	}
+}
+
+// skippedMediaPart is the notice sent instead of a file that matches a skip_media rule.
+func skippedMediaPart(msg *tg.Message, document *tg.Document, lang string) *bridgev2.ConvertedMessagePart {
+	name := mediaFailureText(lang, "file")
+	for _, attr := range document.GetAttributes() {
+		if fn, ok := attr.(*tg.DocumentAttributeFilename); ok && fn.FileName != "" {
+			name = fn.FileName
+		}
+	}
+	body := fmt.Sprintf(mediaFailureText(lang, "skipped"), name, formatFileSize(document.Size))
+	formatted := html.EscapeString(body)
+	if link := getMessageLink(msg); link != "" {
+		open := mediaFailureText(lang, "open")
+		body += " " + open + ": " + link
+		formatted += fmt.Sprintf(` <a href="%s">%s</a>`, html.EscapeString(link), html.EscapeString(open))
+	}
+	return &bridgev2.ConvertedMessagePart{
+		Type: event.EventMessage,
+		Content: &event.MessageEventContent{
+			MsgType:       event.MsgNotice,
+			Body:          body,
+			Format:        event.FormatHTML,
+			FormattedBody: formatted,
+		},
+		Extra: map[string]any{"fi.mau.telegram.media_skipped": map[string]any{"size": document.Size, "name": name}},
 	}
 }
 
@@ -880,6 +909,11 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 			return
 		}
 		telegramMediaID = document.GetID()
+		if tc.main.Config.ShouldSkipMedia(string(portal.ID), string(ids.GetMessageIDFromMessage(msg)), document.Size) {
+			log.Info().Int64("size", document.Size).Msg("Not bridging file, it matches a skip_media rule")
+			converted = skippedMediaPart(msg, document, tc.folderSpaces.language())
+			return
+		}
 
 		content.MsgType = event.MsgFile
 		defaultFileName := "file_document"

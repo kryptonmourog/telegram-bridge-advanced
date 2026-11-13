@@ -268,3 +268,16 @@ func TestIsRetryableMediaError(t *testing.T) {
 	assert.False(t, isRetryableMediaError(fmt.Errorf("x: %w", bridgev2.ErrMediaTooLarge)))
 	assert.False(t, isRetryableMediaError(fmt.Errorf("x: %w", context.Canceled)))
 }
+
+func TestShouldSkipMedia(t *testing.T) {
+	c := TelegramConfig{SkipMedia: []SkipMediaRule{
+		{Portal: "channel:1", MinSizeMB: 3000},
+		{Portal: "channel:2", Message: "2.7"},
+	}}
+	const mb = 1024 * 1024
+	assert.True(t, c.ShouldSkipMedia("channel:1", "1.5", 3920*mb))
+	assert.False(t, c.ShouldSkipMedia("channel:1", "1.5", 900*mb), "smaller files of the room are bridged")
+	assert.False(t, c.ShouldSkipMedia("channel:3", "3.5", 3920*mb), "other rooms aren't affected")
+	assert.True(t, c.ShouldSkipMedia("channel:2", "2.7", 1))
+	assert.False(t, c.ShouldSkipMedia("channel:2", "2.8", 1))
+}

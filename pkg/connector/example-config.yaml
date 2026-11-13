@@ -152,6 +152,13 @@ matrix_request_timeout:
 # sent to Matrix as soon as it's ready, so a room's history shows up while large videos are still
 # uploading instead of all at once at the end. 0 sends the whole backfill at once.
 backfill_split_media_mb: 0
+# Files that aren't bridged: a notice with the file name, size and a link to Telegram is sent instead.
+# Each rule has a portal ID (e.g. channel:123, see the bridge database) and optionally a message ID
+# (e.g. 123.45) and/or a minimum size in megabytes.
+#skip_media:
+#- portal: channel:123
+#  min_size_mb: 3000
+skip_media: []
 # Should communities on Telegram be bridged as Matrix spaces?
 bridge_communities: true
 # Should polls be sent using unstable MSC3381 event types?

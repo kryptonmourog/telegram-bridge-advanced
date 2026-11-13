@@ -103,10 +103,35 @@ type TelegramConfig struct {
 	VideoURLPreviewAsFile                bool                `yaml:"video_url_preview_as_file"`
 	MatrixRequestTimeout                 string              `yaml:"matrix_request_timeout"`
 	BackfillSplitMediaMB                 int64               `yaml:"backfill_split_media_mb"`
+	SkipMedia                            []SkipMediaRule     `yaml:"skip_media"`
 	BridgeCommunities                    bool                `yaml:"bridge_communities"`
 	ExtEvPolls                           bool                `yaml:"extev_polls"`
 	DisplaynameTemplate                  string              `yaml:"displayname_template"`
 	displaynameTemplate                  *template.Template  `yaml:"-"`
+}
+
+// SkipMediaRule matches files that aren't bridged, see skip_media in the example config.
+type SkipMediaRule struct {
+	Portal    string `yaml:"portal"`
+	Message   string `yaml:"message"`
+	MinSizeMB int64  `yaml:"min_size_mb"`
+}
+
+// ShouldSkipMedia reports whether a file of the message must not be bridged.
+func (c TelegramConfig) ShouldSkipMedia(portalID, messageID string, size int64) bool {
+	for _, rule := range c.SkipMedia {
+		if rule.Portal == "" || rule.Portal != portalID {
+			continue
+		}
+		if rule.Message != "" && rule.Message != messageID {
+			continue
+		}
+		if rule.MinSizeMB > 0 && size < rule.MinSizeMB*1024*1024 {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (c TelegramConfig) ShouldBridge(participantCount int) bool {
@@ -207,6 +232,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "video_url_preview_as_file")
 	helper.Copy(up.Str|up.Null, "matrix_request_timeout")
 	helper.Copy(up.Int, "backfill_split_media_mb")
+	helper.Copy(up.List, "skip_media")
 	helper.Copy(up.Bool, "bridge_communities")
 	helper.Copy(up.Bool, "extev_polls")
 	helper.Copy(up.Str, "displayname_template")
