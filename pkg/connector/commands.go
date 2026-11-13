@@ -70,8 +70,8 @@ var cmdAds = &commands.FullHandler{
 	Name: "ads",
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionChats,
-		Description: "Show or change how Telegram's sponsored messages are shown: in a separate room, in channels or not at all",
-		Args:        "[`room` | `on` | `off`]",
+		Description: "Show or change where Telegram's sponsored messages are shown: in a separate room or in the channels",
+		Args:        "[`room` | `on`]",
 	},
 	RequiresLogin: true,
 }
@@ -94,8 +94,10 @@ func fnAds(ce *commands.Event) {
 	}
 	switch sub {
 	case "":
-		ce.Reply("Sponsored messages: %s.\nModes: `ads room` (default), `ads on`, `ads off`.", describe[client.adsMode()])
-	case AdsModeRoom, AdsModeOn, AdsModeOff:
+		ce.Reply("Sponsored messages: %s.\nModes: `ads room` (default), `ads on`.", describe[client.adsMode()])
+	// AdsModeOff stays supported in the code, but isn't offered: with the user's own api_id, not
+	// requesting ads at all is what Telegram's API terms forbid.
+	case AdsModeRoom, AdsModeOn:
 		client.metadata.AdsMode = sub
 		client.metadata.AdsDisabled = false
 		if err := login.Save(ce.Ctx); err != nil {
@@ -116,7 +118,7 @@ func fnAds(ce *commands.Event) {
 		}
 		ce.Reply("Sponsored messages: %s. Removed %d shown ads.", describe[sub], removed)
 	default:
-		ce.Reply("Usage: `ads` (status), `ads room`, `ads on`, `ads off`")
+		ce.Reply("Usage: `ads` (status), `ads room`, `ads on`")
 	}
 }
 
