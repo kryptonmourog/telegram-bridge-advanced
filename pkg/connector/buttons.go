@@ -532,3 +532,22 @@ func (tc *TelegramClient) syncButtonReactions(ctx context.Context, portal *bridg
 		}
 	}
 }
+
+// markOwnMessageRead marks the user's own message as read. Posts the user writes in a channel are
+// sent to Matrix by the channel, not the user's double puppet, so clients counted them as unread.
+func (tc *TelegramClient) markOwnMessageRead(ctx context.Context, portal *bridgev2.Portal, msgID networkid.MessageID) {
+	if portal.MXID == "" {
+		return
+	}
+	dp := tc.userLogin.User.DoublePuppet(ctx)
+	if dp == nil {
+		return
+	}
+	last, err := tc.main.Bridge.DB.Message.GetLastPartByID(ctx, portal.Receiver, msgID)
+	if err != nil || last == nil || last.MXID == "" {
+		return
+	}
+	if err = dp.MarkRead(ctx, portal.MXID, last.MXID, time.Now()); err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to mark own message as read")
+	}
+}

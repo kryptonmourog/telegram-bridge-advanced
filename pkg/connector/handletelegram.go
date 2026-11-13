@@ -329,6 +329,9 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 				StreamOrder:  int64(msg.GetID()),
 				PostHandleFunc: func(ctx context.Context, portal *bridgev2.Portal) {
 					tc.syncButtonReactions(ctx, portal, msgID)
+					if msg.Out {
+						tc.markOwnMessageRead(ctx, portal, msgID)
+					}
 				},
 			},
 			ID:                 msgID,
