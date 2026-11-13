@@ -46,6 +46,8 @@ const chunkedBackfillMaxHold = 2 * time.Hour
 type heldPortal struct {
 	events []func()
 	timer  *time.Timer
+	// lastAnchor is the anchor of the previous chunk, to notice a chunk that made no progress.
+	lastAnchor networkid.MessageID
 }
 
 type chunkedBackfill struct {
@@ -65,6 +67,20 @@ func (cb *chunkedBackfill) start(key networkid.PortalKey, release func()) {
 		return
 	}
 	cb.held[key] = &heldPortal{timer: time.AfterFunc(chunkedBackfillMaxHold, release)}
+}
+
+// repeatedAnchor records the anchor of a new chunk and reports whether it's the same as the previous
+// chunk's, which means the previous chunk didn't get bridged and splitting would loop.
+func (cb *chunkedBackfill) repeatedAnchor(key networkid.PortalKey, anchor networkid.MessageID) bool {
+	cb.lock.Lock()
+	defer cb.lock.Unlock()
+	hp, ok := cb.held[key]
+	if !ok || anchor == "" {
+		return false
+	}
+	repeated := hp.lastAnchor == anchor
+	hp.lastAnchor = anchor
+	return repeated
 }
 
 // hold queues a new message event of the portal if a backfill of it is running.

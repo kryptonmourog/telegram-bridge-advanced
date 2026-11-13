@@ -305,12 +305,32 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	}
 	// They are returned with most recent message first, convert them oldest first.
 	slices.Reverse(toConvert)
+	if fetchParams.Forward && fetchParams.AnchorMessage != nil && tc.backfillSplitBytes() > 0 {
+		// bridgev2 drops forward backfill messages that aren't newer than the last bridged one, so
+		// leave them out here: otherwise a chunk made only of such messages would be dropped
+		// entirely and the same chunk requested again forever.
+		anchorTS := fetchParams.AnchorMessage.Timestamp
+		toConvert = slices.DeleteFunc(toConvert, func(m *tg.Message) bool {
+			return !time.Unix(int64(m.Date), 0).After(anchorTS)
+		})
+	}
 
 	// When splitting, a chunk ends at a large file: the messages before it are sent first, and the
 	// file is sent alone, so the room fills up while large uploads are running.
 	var splitAt int64
 	if fetchParams.Forward {
 		splitAt = tc.backfillSplitBytes()
+		if splitAt > 0 && fetchParams.AnchorMessage != nil && tc.chunkedBackfill.repeatedAnchor(portal.PortalKey, fetchParams.AnchorMessage.ID) {
+			log.Warn().Str("anchor_id", string(fetchParams.AnchorMessage.ID)).Msg("Previous backfill chunk made no progress, sending the rest at once")
+			splitAt = 0
+			// Still hold new messages until this last part is sent.
+			key := portal.PortalKey
+			defer func() {
+				if retErr == nil && out != nil {
+					out.CompleteCallback = func() { go tc.finishChunkedBackfill(key) }
+				}
+			}()
+		}
 	}
 	hasMoreChunks := false
 	var backfillMessages []*bridgev2.BackfillMessage
@@ -318,7 +338,10 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		log := log.With().Int("message_id", message.GetID()).Logger()
 		ctx := log.WithContext(ctx)
 		large := isLargeBackfillMedia(message, splitAt)
-		if large && len(backfillMessages) > 0 {
+		// A chunk never ends between messages of the same second (e.g. an album), as bridgev2 would
+		// drop the rest of that second from the next chunk.
+		sameSecondAsPrev := i > 0 && toConvert[i-1].Date == message.Date
+		if large && len(backfillMessages) > 0 && !sameSecondAsPrev {
 			hasMoreChunks = true
 			break
 		}
@@ -369,7 +392,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		}
 
 		backfillMessages = append(backfillMessages, &backfillMessage)
-		if large && i < len(toConvert)-1 {
+		if large && i < len(toConvert)-1 && toConvert[i+1].Date != message.Date {
 			hasMoreChunks = true
 			break
 		}
