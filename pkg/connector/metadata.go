@@ -114,9 +114,11 @@ type PollMetadata struct {
 }
 
 type UserLoginMetadata struct {
-	LoginPhone  string           `json:"phone,omitempty"`
-	LoginMethod string           `json:"login_method,omitempty"`
-	IsBot       bool             `json:"is_bot,omitempty"`
+	LoginPhone  string `json:"phone,omitempty"`
+	LoginMethod string `json:"login_method,omitempty"`
+	IsBot       bool   `json:"is_bot,omitempty"`
+	// AdsDisabled is set with `ads off`: Telegram's sponsored messages aren't bridged.
+	AdsDisabled bool             `json:"ads_disabled,omitempty"`
 	Session     UserLoginSession `json:"session"`
 	TakeoutID   int64            `json:"takeout_id,omitempty"`
 

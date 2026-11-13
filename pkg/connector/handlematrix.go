@@ -123,7 +123,7 @@ func (tc *TelegramClient) HandleMatrixViewingChat(ctx context.Context, msg *brid
 }
 
 func (tc *TelegramClient) pollSponsoredMessage(ctx context.Context, portal *bridgev2.Portal) error {
-	if tc.metadata.IsBot {
+	if tc.metadata.IsBot || tc.metadata.AdsDisabled {
 		return nil
 	}
 	meta := portal.Metadata.(*PortalMetadata)

@@ -65,6 +65,56 @@ func fnSyncChats(ce *commands.Event) {
 	}
 }
 
+var cmdAds = &commands.FullHandler{
+	Func: fnAds,
+	Name: "ads",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "Show whether Telegram's sponsored messages in channels are bridged, or turn them on or off",
+		Args:        "[`on` | `off`]",
+	},
+	RequiresLogin: true,
+}
+
+func fnAds(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return
+	}
+	client := login.Client.(*TelegramClient)
+	var sub string
+	if len(ce.Args) > 0 {
+		sub = strings.ToLower(ce.Args[0])
+	}
+	switch sub {
+	case "":
+		if client.metadata.AdsDisabled {
+			ce.Reply("Sponsored messages are off. Use `ads on` to show them again.")
+		} else {
+			ce.Reply("Sponsored messages are on: Telegram's ads are shown in channel rooms. Use `ads off` to hide them.")
+		}
+	case "on", "off":
+		client.metadata.AdsDisabled = sub == "off"
+		if err := login.Save(ce.Ctx); err != nil {
+			ce.Reply("Failed to save the setting: %v", err)
+			return
+		}
+		if sub == "on" {
+			ce.Reply("Sponsored messages are on again, they'll appear in channels as Telegram serves them.")
+			return
+		}
+		removed, err := client.removeSponsoredMessages(ce.Ctx)
+		if err != nil {
+			ce.Reply("Sponsored messages are off, but removing the shown ones failed after %d: %v", removed, err)
+			return
+		}
+		ce.Reply("Sponsored messages are off. Removed %d shown ads. Note that Telegram's API terms ask apps to show them.", removed)
+	default:
+		ce.Reply("Usage: `ads` (status), `ads on`, `ads off`")
+	}
+}
+
 var cmdArchive = &commands.FullHandler{
 	Func: fnArchive,
 	Name: "archive",
