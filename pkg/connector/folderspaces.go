@@ -128,6 +128,8 @@ type folderSpaceManager struct {
 	rootStateChecked bool
 	// isBot caches whether a Telegram user is a bot (ghosts don't reliably store it). Guarded by lock.
 	isBot map[int64]bool
+	// favouriteTagged holds pinned rooms already tagged as favourite in this run. Guarded by lock.
+	favouriteTagged map[id.RoomID]struct{}
 
 	scheduleLock sync.Mutex
 	scheduled    bool
@@ -459,6 +461,7 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 	if err = ul.Save(ctx); err != nil {
 		return fmt.Errorf("failed to save login after folder space reconcile: %w", err)
 	}
+	fs.tagPinnedFavourites(ctx)
 	log.Info().
 		Int("folders", len(entries)-1).
 		Int("rooms", len(userPortals)).
@@ -468,6 +471,43 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		Int("links_removed", stats.unlinked).
 		Msg("Reconciled folder spaces")
 	return nil
+}
+
+// tagPinnedFavourites tags rooms of pinned dialogs as favourite. bridgev2 tags a new room before the
+// user's double puppet has joined it, which the homeserver refuses, so pinned chats bridged for the
+// first time would otherwise never become favourites. Reconciles run after rooms are created, so
+// this catches them. Must be called with fs.lock held.
+func (fs *folderSpaceManager) tagPinnedFavourites(ctx context.Context) {
+	tc := fs.tc
+	if !slices.Contains(tc.main.Bridge.Config.OnlyBridgeTags, event.RoomTagFavourite) {
+		return
+	}
+	dp := tc.userLogin.User.DoublePuppet(ctx)
+	if dp == nil {
+		return
+	}
+	if fs.favouriteTagged == nil {
+		fs.favouriteTagged = make(map[id.RoomID]struct{})
+	}
+	log := zerolog.Ctx(ctx)
+	for _, portalID := range tc.metadata.PinnedDialogs {
+		peerType, chatID, topicID, err := ids.ParsePortalID(portalID)
+		if err != nil {
+			continue
+		}
+		portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, tc.makePortalKeyFromID(peerType, chatID, topicID))
+		if err != nil || portal == nil || portal.MXID == "" {
+			continue
+		}
+		if _, ok := fs.favouriteTagged[portal.MXID]; ok {
+			continue
+		}
+		if err = dp.TagRoom(ctx, portal.MXID, event.RoomTagFavourite, true); err != nil {
+			log.Warn().Err(err).Stringer("room_id", portal.MXID).Msg("Failed to tag pinned chat as favourite")
+			continue
+		}
+		fs.favouriteTagged[portal.MXID] = struct{}{}
+	}
 }
 
 // staleSpaceChildren reads the space's current state from the homeserver and returns the linked
