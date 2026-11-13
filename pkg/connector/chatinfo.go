@@ -800,6 +800,9 @@ func (tc *TelegramClient) getPowerLevelOverridesFromBannedRights(entity tg.ChatC
 		event.StateHistoryVisibility:       85,
 		event.StateBeeperDisappearingTimer: 85,
 		event.BeeperDeleteChat:             *creatorPowerLevel,
+		// Anyone can react in Telegram, also in channels where only admins can post, so reactions
+		// must not inherit the raised events_default (they were rejected with M_FORBIDDEN).
+		event.EventReaction: *anyonePowerLevel,
 	}
 
 	if _, isCommunity := entity.(*tg.Community); isCommunity {
