@@ -536,6 +536,12 @@ func (tc *TelegramClient) syncNormalDialog(
 	if err = resultToError(res); err != nil {
 		return err
 	}
+	if peer, ok := dialog.Peer.(*tg.PeerChannel); ok {
+		if channel, ok := chats[peer.ChannelID].(*tg.Channel); ok && channel.Forum {
+			// Topics are created in the background, each may backfill a lot.
+			go tc.syncForumTopics(context.WithoutCancel(ctx), channel, allowCreate)
+		}
+	}
 	return nil
 }
 
