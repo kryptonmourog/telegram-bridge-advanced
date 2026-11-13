@@ -518,6 +518,9 @@ func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2
 	if pressed, err := tc.maybePressButtonByReply(ctx, msg); pressed {
 		return nil, err
 	}
+	if sent, err := tc.maybeSendComment(ctx, msg); sent {
+		return nil, err
+	}
 
 	peer, topicID, err := tc.inputPeerForPortalID(ctx, msg.Portal.ID)
 	if err != nil {
@@ -1212,6 +1215,7 @@ func (tc *TelegramClient) HandleMatrixReadReceipt(ctx context.Context, msg *brid
 
 	// Poll for reactions (non-blocking to avoid deadlock when portal event buffer is disabled)
 	go func() {
+		tc.maybePollComments(context.WithoutCancel(ctx), msg.Portal)
 		err := tc.maybePollForReactions(ctx, msg.Portal)
 		if err != nil {
 			log.Err(err).Msg("failed to poll for reactions after read receipt")

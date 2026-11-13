@@ -52,7 +52,10 @@ func (tc *TelegramConnector) Start(ctx context.Context) error {
 	if err := tc.applyMatrixRequestTimeout(); err != nil {
 		return err
 	}
-	return tc.Store.Upgrade(ctx)
+	if err := tc.Store.Upgrade(ctx); err != nil {
+		return err
+	}
+	return tc.createCommentTables(ctx)
 }
 
 // matrixResponseTimeout is how long to wait for the homeserver's response once a request has been

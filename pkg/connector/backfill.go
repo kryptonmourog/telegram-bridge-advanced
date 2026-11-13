@@ -336,6 +336,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	}
 	hasMoreChunks := false
 	var backfillMessages []*bridgev2.BackfillMessage
+	var chunkMessages []*tg.Message
 	for i, message := range toConvert {
 		log := log.With().Int("message_id", message.GetID()).Logger()
 		ctx := log.WithContext(ctx)
@@ -394,6 +395,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		}
 
 		backfillMessages = append(backfillMessages, &backfillMessage)
+		chunkMessages = append(chunkMessages, message)
 		if large && i < len(toConvert)-1 && toConvert[i+1].Date != message.Date {
 			hasMoreChunks = true
 			break
@@ -412,6 +414,19 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 			completeCallback = func() { go tc.continueChunkedBackfill(key) }
 		} else {
 			completeCallback = func() { go tc.finishChunkedBackfill(key, true) }
+		}
+	}
+
+	// Comments of the posts are fetched once the posts are in the room, see comments.go.
+	if channelID, ok := tc.isBroadcastPortal(portal); ok {
+		if posts := postIDsWithComments(chunkMessages); len(posts) > 0 {
+			prev := completeCallback
+			completeCallback = func() {
+				if prev != nil {
+					prev()
+				}
+				go tc.backfillComments(channelID, posts)
+			}
 		}
 	}
 

@@ -290,6 +290,10 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 
 		topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
 		portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
+		if _, isChannel := msg.PeerID.(*tg.PeerChannel); isChannel && topicID == 0 {
+			// Comments are mirrored into the channel room regardless of how the group is bridged.
+			go tc.handleGroupMessageForComments(context.WithoutCancel(ctx), msg)
+		}
 		if tc.folderSpaces.skipArchivedPeer(msg.PeerID) {
 			log.Debug().Int("message_id", msg.ID).Msg("Ignoring message in archived chat, the archive isn't bridged")
 			return nil
@@ -943,6 +947,9 @@ func (tc *TelegramClient) onDeleteMessages(ctx context.Context, channelID int64,
 		return nil
 	}
 
+	if channelID != 0 {
+		go tc.mirrorCommentDeletes(context.WithoutCancel(ctx), channelID, messages)
+	}
 	for _, messageID := range messages {
 		wrappedMessageID := ids.MakeMessageID(channelID, messageID)
 		var portalKey networkid.PortalKey
@@ -1259,6 +1266,9 @@ func (tc *TelegramClient) onMessageEdit(ctx context.Context, update IGetMessage)
 		}
 	}
 
+	if _, isChannel := msg.PeerID.(*tg.PeerChannel); isChannel && topicID == 0 {
+		go tc.mirrorCommentEdit(context.WithoutCancel(ctx), msg)
+	}
 	portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
 	portal, err := tc.main.Bridge.GetPortalByKey(ctx, portalKey)
 	if err != nil {

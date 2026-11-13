@@ -779,7 +779,9 @@ func (tc *TelegramClient) getPowerLevelOverridesFromBannedRights(entity tg.ChatC
 	plo.StateDefault = superadminPowerLevel
 	plo.UsersDefault = anyonePowerLevel
 	channel, isChannel := entity.(*tg.Channel)
-	if isChannel && !channel.Megagroup {
+	// Channels with comments let anyone post, so that commenters can reply in threads; the bridge
+	// sends thread replies as comments and Telegram rejects other posts from non-admins.
+	if isChannel && !channel.Megagroup && !channel.HasLink {
 		plo.EventsDefault = postMessagesPowerLevel
 	} else if dbr.SendMessages {
 		plo.EventsDefault = otherPowerLevel

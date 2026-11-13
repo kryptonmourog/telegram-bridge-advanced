@@ -147,6 +147,8 @@ type TelegramClient struct {
 
 	// chunkedBackfill holds new messages of rooms whose forward backfill is running in chunks.
 	chunkedBackfill chunkedBackfill
+	// comments mirrors comments of channel posts into channel rooms, see comments.go.
+	comments commentManager
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)
@@ -566,6 +568,14 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 		}
 		tc.folderSpaces.foldersChangedAfter(folderSpacesAfterConnectDelay)
 		go tc.resumeChunkedBackfills(ctx)
+		go func() {
+			// After the startup sync has had time to run.
+			select {
+			case <-time.After(2 * time.Minute):
+				tc.syncExistingComments(ctx)
+			case <-ctx.Done():
+			}
+		}()
 		// If takeout dialog sync is enabled, we assume it'll resume from a getTakeoutID call.
 		// If not, resume dialog sync manually here.
 		if !tc.isNewLogin && !tc.main.Config.Takeout.DialogSync && !tc.metadata.IsBot {
