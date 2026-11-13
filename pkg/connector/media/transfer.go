@@ -328,6 +328,7 @@ func (t *ReadyTransferer) Transfer(ctx context.Context, db *store.Container, int
 		return file.MXC, nil, &t.inner.fileInfo, nil
 	}
 
+	waitForMediaConfig(ctx, intent, int64(t.inner.fileInfo.Size))
 	streamTo := t.directUploadIntent(ctx, intent)
 	if streamTo == nil {
 		// The size of documents is known before downloading, check that the file fits on the disk.
