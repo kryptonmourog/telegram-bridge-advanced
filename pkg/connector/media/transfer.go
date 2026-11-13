@@ -328,14 +328,25 @@ func (t *ReadyTransferer) Transfer(ctx context.Context, db *store.Container, int
 		return file.MXC, nil, &t.inner.fileInfo, nil
 	}
 
-	// The size of documents is known before downloading, check that the file fits on the disk.
-	if err = checkTempDiskSpace(int64(t.inner.fileInfo.Size)); err != nil {
-		return "", nil, nil, err
+	streamTo := t.directUploadIntent(ctx, intent)
+	if streamTo == nil {
+		// The size of documents is known before downloading, check that the file fits on the disk.
+		if err = checkTempDiskSpace(int64(t.inner.fileInfo.Size)); err != nil {
+			return "", nil, nil, err
+		}
 	}
 	var reader io.Reader
 	reader, t.inner.fileInfo.MimeType, t.inner.fileInfo.Size, err = t.Stream(ctx)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("downloading file failed: %w", err)
+	}
+	if streamTo != nil {
+		mxc, err = t.uploadDirectly(ctx, streamTo, reader)
+		if err != nil {
+			return "", nil, &t.inner.fileInfo, fmt.Errorf("failed to upload media to Matrix: %w", err)
+		}
+		t.cacheUploaded(ctx, db, locationID, mxc)
+		return mxc, nil, &t.inner.fileInfo, nil
 	}
 
 	needStickerConvert := t.expectedStickerConvertMime() != ""
@@ -413,21 +424,26 @@ func (t *ReadyTransferer) Transfer(ctx context.Context, db *store.Container, int
 
 	// If it's an unencrypted file, cache the MXC URI corresponding to the
 	// location ID.
-	if len(mxc) > 0 {
-		err = db.TelegramFile.Insert(ctx, &store.TelegramFile{
-			LocationID: locationID,
-			MXC:        mxc,
-			MIMEType:   t.inner.fileInfo.MimeType,
-			Size:       t.inner.fileInfo.Size,
-			Width:      t.inner.fileInfo.Width,
-			Height:     t.inner.fileInfo.Height,
-			Timestamp:  time.Now(),
-		})
-		if err != nil {
-			log.Err(err).Msg("failed to insert Telegram file into database")
-		}
-	}
+	t.cacheUploaded(ctx, db, locationID, mxc)
 	return mxc, encryptedFileInfo, &t.inner.fileInfo, nil
+}
+
+func (t *ReadyTransferer) cacheUploaded(ctx context.Context, db *store.Container, locationID store.TelegramFileLocationID, mxc id.ContentURIString) {
+	if len(mxc) == 0 {
+		return
+	}
+	err := db.TelegramFile.Insert(ctx, &store.TelegramFile{
+		LocationID: locationID,
+		MXC:        mxc,
+		MIMEType:   t.inner.fileInfo.MimeType,
+		Size:       t.inner.fileInfo.Size,
+		Width:      t.inner.fileInfo.Width,
+		Height:     t.inner.fileInfo.Height,
+		Timestamp:  time.Now(),
+	})
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("failed to insert Telegram file into database")
+	}
 }
 
 // Stream streams the media from Telegram to an [io.Reader].
