@@ -144,6 +144,8 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		// send or fetching fails, release them right away, as no chunk will complete.
 		key := fetchParams.Portal.PortalKey
 		tc.startChunkedBackfill(key)
+		// Pending from the start, so that a restart during the first chunk resumes it too.
+		tc.setChunkedBackfillPending(ctx, fetchParams.Portal, true)
 		defer func() {
 			if retErr != nil {
 				go tc.finishChunkedBackfill(key, false)
