@@ -28,6 +28,7 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
+	"go.mau.fi/mautrix-telegram/pkg/connector/media"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
 )
 
@@ -252,4 +253,10 @@ func TestMediaFailurePart(t *testing.T) {
 
 	other := mediaFailurePart(msg, fmt.Errorf("connection reset"), "", 0, 0, "en")
 	assert.Contains(t, other.Content.Body, "Media wasn't bridged from Telegram: connection reset.")
+}
+
+func TestMediaFailurePart_NoSpace(t *testing.T) {
+	msg := &tg.Message{ID: 7, PeerID: &tg.PeerChannel{ChannelID: 5}}
+	part := mediaFailurePart(msg, fmt.Errorf("x: %w", media.ErrNotEnoughDiskSpace), "big.mp4", 3*1024*1024*1024, 4096*1024*1024, "ru")
+	assert.Contains(t, part.Content.Body, "Файл «big.mp4» (3.0 GB) не перенесён: на сервере моста не хватает места на диске")
 }

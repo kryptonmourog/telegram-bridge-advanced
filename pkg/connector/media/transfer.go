@@ -328,6 +328,10 @@ func (t *ReadyTransferer) Transfer(ctx context.Context, db *store.Container, int
 		return file.MXC, nil, &t.inner.fileInfo, nil
 	}
 
+	// The size of documents is known before downloading, check that the file fits on the disk.
+	if err = checkTempDiskSpace(int64(t.inner.fileInfo.Size)); err != nil {
+		return "", nil, nil, err
+	}
 	var reader io.Reader
 	reader, t.inner.fileInfo.MimeType, t.inner.fileInfo.Size, err = t.Stream(ctx)
 	if err != nil {

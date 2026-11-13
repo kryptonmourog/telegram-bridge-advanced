@@ -334,7 +334,9 @@ var mediaFailureStrings = map[string]map[string]string{
 	"en": {
 		"too_large": "📎 File “%s” (%s) wasn't bridged: it's larger than this Matrix server accepts (%s). " +
 			"For the server admin: the limit is max_upload_size in Synapse.",
-		"failed":   "⚠️ Media wasn't bridged from Telegram: %s.",
+		"failed": "⚠️ Media wasn't bridged from Telegram: %s.",
+		"no_space": "📎 File “%s” (%s) wasn't bridged: the bridge server is out of disk space for it. " +
+			"For the bridge admin: the bridge keeps large files in a temporary file while uploading them, it needs more free disk space.",
 		"open":     "Open it in Telegram",
 		"file":     "file",
 		"no_limit": "unknown limit",
@@ -342,7 +344,9 @@ var mediaFailureStrings = map[string]map[string]string{
 	"ru": {
 		"too_large": "📎 Файл «%s» (%s) не перенесён: он больше, чем принимает этот сервер Matrix (%s). " +
 			"Администратору: лимит задаётся параметром max_upload_size в Synapse.",
-		"failed":   "⚠️ Медиа не перенесено из Telegram: %s.",
+		"failed": "⚠️ Медиа не перенесено из Telegram: %s.",
+		"no_space": "📎 Файл «%s» (%s) не перенесён: на сервере моста не хватает места на диске. " +
+			"Администратору моста: большие файлы мост держит во временном файле, пока загружает, — нужно больше свободного места.",
 		"open":     "Открыть в Telegram",
 		"file":     "файл",
 		"no_limit": "лимит неизвестен",
@@ -371,7 +375,12 @@ func formatFileSize(size int64) string {
 // words both users and the homeserver admin understand, and links to the message in Telegram.
 func mediaFailurePart(msg *tg.Message, err error, fileName string, size, serverLimit int64, lang string) *bridgev2.ConvertedMessagePart {
 	var body string
-	if errors.Is(err, bridgev2.ErrMediaTooLarge) {
+	if errors.Is(err, media.ErrNotEnoughDiskSpace) {
+		if fileName == "" {
+			fileName = mediaFailureText(lang, "file")
+		}
+		body = fmt.Sprintf(mediaFailureText(lang, "no_space"), fileName, formatFileSize(size))
+	} else if errors.Is(err, bridgev2.ErrMediaTooLarge) {
 		if fileName == "" {
 			fileName = mediaFailureText(lang, "file")
 		}
@@ -403,6 +412,7 @@ func mediaFailurePart(msg *tg.Message, err error, fileName string, size, serverL
 		},
 		Extra: map[string]any{"fi.mau.telegram.media_failed": map[string]any{
 			"too_large": errors.Is(err, bridgev2.ErrMediaTooLarge),
+			"no_space":  errors.Is(err, media.ErrNotEnoughDiskSpace),
 			"size":      size,
 			"limit":     serverLimit,
 		}},
