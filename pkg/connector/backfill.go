@@ -379,6 +379,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	if splitAt > 0 {
 		key := portal.PortalKey
 		if hasMoreChunks {
+			tc.setChunkedBackfillPending(ctx, portal, true)
 			log.Info().
 				Int("chunk_size", len(backfillMessages)).
 				Int("remaining", len(toConvert)-len(backfillMessages)).

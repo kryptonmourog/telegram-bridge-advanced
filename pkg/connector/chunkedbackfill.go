@@ -120,8 +120,44 @@ func (tc *TelegramClient) startChunkedBackfill(key networkid.PortalKey) {
 	})
 }
 
+// setChunkedBackfillPending remembers in the portal metadata whether a chunked backfill is unfinished.
+func (tc *TelegramClient) setChunkedBackfillPending(ctx context.Context, portal *bridgev2.Portal, pending bool) {
+	meta := portal.Metadata.(*PortalMetadata)
+	if meta.ChunkedBackfillPending == pending {
+		return
+	}
+	meta.ChunkedBackfillPending = pending
+	if err := portal.Save(ctx); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to save chunked backfill state")
+	}
+}
+
+// resumeChunkedBackfills continues chunked backfills that were interrupted by a restart.
+func (tc *TelegramClient) resumeChunkedBackfills(ctx context.Context) {
+	if tc.backfillSplitBytes() <= 0 {
+		return
+	}
+	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to get portals to resume chunked backfill")
+		return
+	}
+	for _, up := range userPortals {
+		portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, up.Portal)
+		if err != nil || portal == nil || portal.MXID == "" || !portal.Metadata.(*PortalMetadata).ChunkedBackfillPending {
+			continue
+		}
+		zerolog.Ctx(ctx).Info().Stringer("portal_key", portal.PortalKey).Msg("Resuming interrupted chunked backfill")
+		tc.startChunkedBackfill(portal.PortalKey)
+		tc.continueChunkedBackfill(portal.PortalKey)
+	}
+}
+
 // finishChunkedBackfill releases the new messages held during the backfill of the portal.
 func (tc *TelegramClient) finishChunkedBackfill(key networkid.PortalKey) {
+	if portal, err := tc.main.Bridge.GetExistingPortalByKey(context.Background(), key); err == nil && portal != nil {
+		tc.setChunkedBackfillPending(context.Background(), portal, false)
+	}
 	events := tc.chunkedBackfill.finish(key)
 	if len(events) > 0 {
 		tc.main.Bridge.Log.Debug().Stringer("portal_key", key).Int("count", len(events)).Msg("Releasing messages held during backfill")

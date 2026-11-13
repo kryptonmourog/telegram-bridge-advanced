@@ -56,6 +56,10 @@ func (gm *GhostMetadata) IsMin() bool {
 }
 
 type PortalMetadata struct {
+	// ChunkedBackfillPending is set while a forward backfill is sent in chunks, so that it can be
+	// resumed after a restart (see chunkedbackfill.go).
+	ChunkedBackfillPending bool `json:"chunked_backfill_pending,omitempty"`
+
 	IsSuperGroup      bool          `json:"is_supergroup,omitempty"`
 	IsForumGeneral    bool          `json:"is_forum_general,omitempty"`
 	IsCommunity       bool          `json:"is_community,omitempty"`

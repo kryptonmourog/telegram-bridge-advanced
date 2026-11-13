@@ -565,6 +565,7 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 			go tc.resendCapabilities(ctx)
 		}
 		tc.folderSpaces.foldersChangedAfter(folderSpacesAfterConnectDelay)
+		go tc.resumeChunkedBackfills(ctx)
 		// If takeout dialog sync is enabled, we assume it'll resume from a getTakeoutID call.
 		// If not, resume dialog sync manually here.
 		if !tc.isNewLogin && !tc.main.Config.Takeout.DialogSync && !tc.metadata.IsBot {
