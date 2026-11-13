@@ -1147,6 +1147,13 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 		return tc.onOwnReadReceipt(tc.makePortalKeyFromPeer(update.Peer, update.TopMsgID), update.MaxID)
 	case *tg.UpdateReadChannelInbox:
 		return tc.onOwnReadReceipt(tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, 0), update.MaxID)
+	case *tg.UpdateReadChannelDiscussionInbox:
+		// Reading a forum topic (or a comment thread, which has no room of its own and is ignored).
+		topicID := update.TopMsgID
+		if topicID == generalTopicID {
+			topicID = 0
+		}
+		return tc.onOwnReadReceipt(tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, topicID), update.ReadMaxID)
 	case *tg.UpdateNotifySettings:
 		return tc.onNotifySettings(ctx, e, update)
 	case *tg.UpdatePinnedDialogs:

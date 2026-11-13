@@ -28,6 +28,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
@@ -54,6 +55,8 @@ type commentManager struct {
 	lastPoll map[id.RoomID]time.Time
 	// discussionGroups caches whether a supergroup is the discussion group of a channel.
 	discussionGroups map[int64]bool
+	// openRooms are channel rooms already checked to let commenters post.
+	openRooms map[id.RoomID]struct{}
 }
 
 const commentPollInterval = 5 * time.Minute
@@ -248,6 +251,34 @@ func (tc *TelegramClient) isDiscussionGroup(ctx context.Context, groupID int64) 
 	return result
 }
 
+// ensureCommentsAllowed lowers events_default of a channel room so that commenters can post threads.
+// New rooms get it from the chat info, rooms made before comments were mirrored only on their next
+// info sync. Must be called with the comment lock held.
+func (tc *TelegramClient) ensureCommentsAllowed(ctx context.Context, room id.RoomID) error {
+	if _, ok := tc.comments.openRooms[room]; ok {
+		return nil
+	}
+	bot, ok := tc.main.Bridge.Bot.(*matrix.ASIntent)
+	if !ok {
+		return nil
+	}
+	var pl event.PowerLevelsEventContent
+	if err := bot.Matrix.StateEvent(ctx, room, event.StatePowerLevels, "", &pl); err != nil {
+		return fmt.Errorf("failed to get power levels: %w", err)
+	}
+	if pl.EventsDefault > 0 {
+		pl.EventsDefault = 0
+		if _, err := tc.main.Bridge.Bot.SendState(ctx, room, event.StatePowerLevels, "", &event.Content{Parsed: &pl}, time.Now()); err != nil {
+			return fmt.Errorf("failed to let commenters post: %w", err)
+		}
+	}
+	if tc.comments.openRooms == nil {
+		tc.comments.openRooms = make(map[id.RoomID]struct{})
+	}
+	tc.comments.openRooms[room] = struct{}{}
+	return nil
+}
+
 // mirrorComment sends a comment to the channel room as a thread message under its post.
 func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg *tg.Message) error {
 	rootID := commentRootID(msg)
@@ -276,6 +307,9 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 		return err
 	}
 
+	if err = tc.ensureCommentsAllowed(ctx, portal.MXID); err != nil {
+		return err
+	}
 	sender := tc.getEventSender(msg, false)
 	intent, ok := portal.GetIntentFor(ctx, sender, tc.userLogin, bridgev2.RemoteEventMessage)
 	if !ok {
@@ -369,7 +403,8 @@ func (tc *TelegramClient) mirrorCommentDeletes(ctx context.Context, groupID int6
 	}
 }
 
-// fetchPostComments mirrors the comments of a post that aren't in Matrix yet, oldest first.
+// fetchPostComments mirrors the comments of a post that aren't in Matrix yet, oldest first. It returns
+// an error if fetching failed or any comment couldn't be mirrored.
 func (tc *TelegramClient) fetchPostComments(ctx context.Context, channelID int64, postID int) error {
 	thread, err := tc.commentThreadForPost(ctx, channelID, postID)
 	if err != nil || thread == nil {
@@ -420,15 +455,17 @@ func (tc *TelegramClient) fetchPostComments(ctx context.Context, channelID int64
 	}
 	// Returned newest first.
 	slices.Reverse(comments)
+	var failed error
 	for _, msg := range comments {
 		if err = tc.mirrorComment(ctx, thread.GroupID, msg); err != nil {
 			zerolog.Ctx(ctx).Err(err).Int("msg_id", msg.ID).Msg("Failed to mirror comment")
+			failed = err
 		}
 	}
 	if len(comments) > 0 {
 		zerolog.Ctx(ctx).Debug().Int64("channel_id", channelID).Int("post_id", postID).Int("count", len(comments)).Msg("Mirrored comments of post")
 	}
-	return nil
+	return failed
 }
 
 // postIDsWithComments returns the posts among the messages that have comments.
@@ -441,17 +478,17 @@ func postIDsWithComments(messages []*tg.Message) (postIDs []int) {
 	return
 }
 
-// backfillComments fetches all comments of the given posts in the background.
-func (tc *TelegramClient) backfillComments(channelID int64, postIDs []int) {
-	if len(postIDs) == 0 {
-		return
-	}
+// backfillComments fetches all comments of the given posts and reports whether all of them made it.
+func (tc *TelegramClient) backfillComments(channelID int64, postIDs []int) bool {
 	ctx := tc.main.Bridge.Log.With().Str("action", "backfill comments").Int64("channel_id", channelID).Logger().WithContext(context.Background())
+	ok := true
 	for _, postID := range postIDs {
 		if err := tc.fetchPostComments(ctx, channelID, postID); err != nil {
 			zerolog.Ctx(ctx).Err(err).Int("post_id", postID).Msg("Failed to backfill comments")
+			ok = false
 		}
 	}
+	return ok
 }
 
 // latestPostsWithComments asks Telegram which of the latest bridged posts of a channel have comments.
@@ -555,7 +592,10 @@ func (tc *TelegramClient) syncExistingComments(ctx context.Context) {
 			zerolog.Ctx(ctx).Err(err).Stringer("portal_key", portal.PortalKey).Msg("Failed to check posts for comments")
 			continue
 		}
-		tc.backfillComments(channelID, postIDsWithComments(posts))
+		if !tc.backfillComments(channelID, postIDsWithComments(posts)) {
+			// Try again on the next start.
+			continue
+		}
 		meta.CommentsSynced = true
 		if err = portal.Save(ctx); err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment sync state")
