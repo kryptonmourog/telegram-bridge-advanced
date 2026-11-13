@@ -29,6 +29,7 @@ import (
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
@@ -125,6 +126,8 @@ type folderSpaceManager struct {
 
 	// rootStateChecked is set once the root space's actual state has been cleaned up in this run.
 	rootStateChecked bool
+	// isBot caches whether a Telegram user is a bot (ghosts don't reliably store it). Guarded by lock.
+	isBot map[int64]bool
 
 	scheduleLock sync.Mutex
 	scheduled    bool
@@ -387,6 +390,7 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		return fmt.Errorf("failed to get portals of login: %w", err)
 	}
 	contactIDs := fs.contactIDs(ctx)
+	fs.resolveBots(ctx, userPortals)
 	want := make(map[id.RoomID]map[id.RoomID]struct{}, len(entries))
 	for _, room := range subspaceOf {
 		want[room] = map[id.RoomID]struct{}{}
@@ -490,6 +494,42 @@ func (fs *folderSpaceManager) staleSpaceChildren(ctx context.Context, space id.R
 	return stale, nil
 }
 
+// resolveBots asks Telegram which users of the login's private chats are bots, for users not cached
+// yet (a user doesn't stop being a bot). Must be called with fs.lock held. On error, the users stay
+// unknown and the ghost's stored flag is used instead.
+func (fs *folderSpaceManager) resolveBots(ctx context.Context, userPortals []*database.UserPortal) {
+	if fs.isBot == nil {
+		fs.isBot = map[int64]bool{}
+	}
+	var unknown []tg.InputUserClass
+	for _, up := range userPortals {
+		pt, userID, _, err := ids.ParsePortalID(up.Portal.ID)
+		if err != nil || pt != ids.PeerTypeUser || userID == fs.tc.telegramUserID {
+			continue
+		}
+		if _, ok := fs.isBot[userID]; ok {
+			continue
+		}
+		accessHash, err := fs.tc.ScopedStore.GetAccessHash(ctx, ids.PeerTypeUser, userID)
+		if err != nil {
+			continue
+		}
+		unknown = append(unknown, &tg.InputUser{UserID: userID, AccessHash: accessHash})
+	}
+	for chunk := range slices.Chunk(unknown, 100) {
+		users, err := fs.tc.client.API().UsersGetUsers(ctx, chunk)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Int("count", len(chunk)).Msg("Failed to get users to detect bots for folder spaces")
+			return
+		}
+		for _, u := range users {
+			if user, ok := u.(*tg.User); ok {
+				fs.isBot[user.ID] = user.Bot
+			}
+		}
+	}
+}
+
 // contactIDs returns the Telegram user IDs in the contact list. On error the list is empty,
 // which only affects the "contacts" / "non-contacts" rules until the next reconcile.
 func (fs *folderSpaceManager) contactIDs(ctx context.Context) map[int64]struct{} {
@@ -519,7 +559,11 @@ func (fs *folderSpaceManager) folderChatForPortal(ctx context.Context, portal *b
 			break
 		}
 		fc.Kind = folderChatUser
-		if ghost, err := fs.tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeUserID(chatID)); err == nil && ghost != nil && ghost.IsBot {
+		if bot, known := fs.isBot[chatID]; known {
+			if bot {
+				fc.Kind = folderChatBot
+			}
+		} else if ghost, err := fs.tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeUserID(chatID)); err == nil && ghost != nil && ghost.IsBot {
 			fc.Kind = folderChatBot
 		}
 		_, fc.Contact = contactIDs[chatID]
