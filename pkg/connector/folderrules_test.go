@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -297,4 +298,22 @@ func TestAdsMode(t *testing.T) {
 	assert.Equal(t, AdsModeOff, tc.adsMode(), "the old off switch still works")
 	tc.metadata.AdsMode = AdsModeOn
 	assert.Equal(t, AdsModeOn, tc.adsMode())
+}
+
+func TestEffectiveMute(t *testing.T) {
+	tc := &TelegramClient{}
+	future := time.Now().Add(time.Hour).Truncate(time.Second)
+	tc.notifyDefaults.set(notifyBroadcasts, future)
+	tc.notifyDefaults.fetched = true
+
+	assert.Equal(t, future, *tc.effectiveMute(tg.PeerNotifySettings{}, notifyBroadcasts), "a channel without its own setting follows the default")
+	assert.Equal(t, bridgev2.Unmuted, *tc.effectiveMute(tg.PeerNotifySettings{}, notifyUsers), "kinds without a muted default stay unmuted")
+
+	own := tg.PeerNotifySettings{}
+	own.SetMuteUntil(0)
+	assert.True(t, tc.effectiveMute(own, notifyBroadcasts).Before(time.Now()), "an explicit unmute wins over the default")
+
+	assert.Equal(t, notifyBroadcasts, notifyKindOfPeer(&tg.PeerChannel{ChannelID: 1}, map[int64]tg.ChatClass{1: &tg.Channel{ID: 1, Broadcast: true}}))
+	assert.Equal(t, notifyChats, notifyKindOfPeer(&tg.PeerChannel{ChannelID: 2}, map[int64]tg.ChatClass{2: &tg.Channel{ID: 2, Megagroup: true}}))
+	assert.Equal(t, notifyUsers, notifyKindOfPeer(&tg.PeerUser{UserID: 3}, nil))
 }

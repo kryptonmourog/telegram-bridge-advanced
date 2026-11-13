@@ -371,14 +371,9 @@ var (
 	_ userLocalDialog = (*tg.DialogCommunity)(nil)
 )
 
-func (tc *TelegramClient) fillUserLocalMeta(info *bridgev2.ChatInfo, dialog userLocalDialog) {
+func (tc *TelegramClient) fillUserLocalMeta(info *bridgev2.ChatInfo, dialog userLocalDialog, kind notifyKind) {
 	info.UserLocal = &bridgev2.UserLocalPortalInfo{}
-	notifySettings := dialog.GetNotifySettings()
-	if mu, ok := notifySettings.GetMuteUntil(); ok {
-		info.UserLocal.MutedUntil = ptr.Ptr(time.Unix(int64(mu), 0))
-	} else {
-		info.UserLocal.MutedUntil = &bridgev2.Unmuted
-	}
+	info.UserLocal.MutedUntil = tc.effectiveMute(dialog.GetNotifySettings(), kind)
 	if dialog.GetPinned() {
 		info.UserLocal.Tag = ptr.Ptr(event.RoomTagFavourite)
 	}

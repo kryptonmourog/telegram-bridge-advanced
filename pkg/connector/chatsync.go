@@ -55,6 +55,9 @@ func (tc *TelegramClient) syncChats(ctx context.Context, takeoutID int64, onLogi
 	}
 	log := logWith.Logger()
 
+	// Chats without their own notification setting follow the default of their kind.
+	tc.fetchNotifyDefaults(ctx)
+
 	if !tc.syncChatsLock.TryLock() {
 		log.Warn().Msg("Waiting for chat sync lock")
 		tc.syncChatsLock.Lock()
@@ -488,7 +491,7 @@ func (tc *TelegramClient) syncNormalDialog(
 		}
 	}
 
-	tc.fillUserLocalMeta(chatInfo, dialog)
+	tc.fillUserLocalMeta(chatInfo, dialog, notifyKindOfPeer(dialog.Peer, chats))
 
 	res := tc.queueRemoteEvent(&simplevent.ChatResync{
 		ChatInfo: chatInfo,
@@ -575,7 +578,7 @@ func (tc *TelegramClient) syncCommunityDialog(ctx context.Context, dialog *tg.Di
 		return nil
 	}
 
-	tc.fillUserLocalMeta(chatInfo, dialog)
+	tc.fillUserLocalMeta(chatInfo, dialog, notifyChats)
 
 	res := tc.queueRemoteEvent(&simplevent.ChatResync{
 		ChatInfo: chatInfo,

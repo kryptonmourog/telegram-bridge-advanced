@@ -151,6 +151,8 @@ type TelegramClient struct {
 	comments commentManager
 	// adsRoom tracks ads sent to the ads room, see adsroom.go.
 	adsRoom adsRoomState
+	// notifyDefaults are Telegram's default notification settings, see notifydefaults.go.
+	notifyDefaults notifyDefaults
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)

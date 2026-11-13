@@ -1615,6 +1615,15 @@ func (tc *TelegramClient) onNotifySettings(ctx context.Context, e tg.Entities, u
 		portalKey = tc.makePortalKeyFromPeer(typedPeer.Peer, 0)
 	case *tg.NotifyForumTopic:
 		portalKey = tc.makePortalKeyFromPeer(typedPeer.Peer, typedPeer.TopMsgID)
+	case *tg.NotifyUsers:
+		tc.onDefaultNotifySettings(ctx, notifyUsers, update.NotifySettings)
+		return nil
+	case *tg.NotifyChats:
+		tc.onDefaultNotifySettings(ctx, notifyChats, update.NotifySettings)
+		return nil
+	case *tg.NotifyBroadcasts:
+		tc.onDefaultNotifySettings(ctx, notifyBroadcasts, update.NotifySettings)
+		return nil
 	default:
 		zerolog.Ctx(ctx).Debug().
 			Type("peer_type", update.Peer).
@@ -1623,12 +1632,7 @@ func (tc *TelegramClient) onNotifySettings(ctx context.Context, e tg.Entities, u
 		return nil
 	}
 
-	var mutedUntil *time.Time
-	if mu, ok := update.NotifySettings.GetMuteUntil(); ok {
-		mutedUntil = ptr.Ptr(time.Unix(int64(mu), 0))
-	} else {
-		mutedUntil = &bridgev2.Unmuted
-	}
+	mutedUntil := tc.muteForPortalUpdate(ctx, portalKey, update.NotifySettings)
 
 	res := tc.queueRemoteEvent(&simplevent.ChatInfoChange{
 		ChatInfoChange: &bridgev2.ChatInfoChange{
