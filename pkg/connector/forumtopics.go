@@ -60,7 +60,7 @@ func (tc *TelegramClient) syncForumTopics(ctx context.Context, channel *tg.Chann
 			continue
 		}
 		topMessage := topic.TopMessage
-		res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
+		res := tc.queueRemoteEvent(&simplevent.ChatResync{
 			EventMeta: simplevent.EventMeta{
 				Type:         bridgev2.RemoteEventChatResync,
 				PortalKey:    key,

@@ -177,7 +177,7 @@ func (tc *TelegramClient) handleTelegramReactions(ctx context.Context, peer tg.P
 		return err
 	}
 
-	return resultToError(tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ReactionSync{
+	return resultToError(tc.queueRemoteEvent(&simplevent.ReactionSync{
 		EventMeta: simplevent.EventMeta{
 			Type: bridgev2.RemoteEventReactionSync,
 			LogContext: func(c zerolog.Context) zerolog.Context {
@@ -317,7 +317,7 @@ func (tc *TelegramClient) pollForReactions(ctx context.Context, portalKey networ
 			return err
 		}
 
-		res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ReactionSync{
+		res := tc.queueRemoteEvent(&simplevent.ReactionSync{
 			EventMeta: simplevent.EventMeta{
 				Type: bridgev2.RemoteEventReactionSync,
 				LogContext: func(c zerolog.Context) zerolog.Context {

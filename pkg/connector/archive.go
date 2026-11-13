@@ -230,7 +230,7 @@ func (tc *TelegramClient) onFolderPeers(ctx context.Context, update *tg.UpdateFo
 // creating the room if allowed and needed.
 func (tc *TelegramClient) resyncWithBackfill(key networkid.PortalKey, create bool) {
 	go func() {
-		res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
+		res := tc.queueRemoteEvent(&simplevent.ChatResync{
 			EventMeta: simplevent.EventMeta{
 				Type:         bridgev2.RemoteEventChatResync,
 				PortalKey:    key,
@@ -339,4 +339,16 @@ func parseFolderPeerID(peerID string) (ids.PeerType, int64, error) {
 		return "", 0, fmt.Errorf("invalid peer ID %q: %w", peerID, err)
 	}
 	return ids.PeerType(pt), chatID, nil
+}
+
+// queueRemoteEvent queues an event from Telegram, dropping events of archived chats while the
+// archive isn't bridged: bridgev2 brings the user back into a portal's room for any event of it
+// (an edit or reaction in a hidden archived channel made its room reappear).
+func (tc *TelegramClient) queueRemoteEvent(evt bridgev2.RemoteEvent) bridgev2.EventHandlingResult {
+	if key := evt.GetPortalKey(); key.ID != "" {
+		if peerType, chatID, _, err := ids.ParsePortalID(key.ID); err == nil && tc.folderSpaces.skipArchivedPeer(peerForID(peerType, chatID)) {
+			return bridgev2.EventHandlingResultIgnored
+		}
+	}
+	return tc.main.Bridge.QueueRemoteEvent(tc.userLogin, evt)
 }

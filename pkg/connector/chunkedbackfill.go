@@ -205,7 +205,7 @@ func (tc *TelegramClient) createRoomWithBackfill(ctx context.Context, key networ
 	if err != nil || (portal != nil && portal.MXID != "") {
 		return false
 	}
-	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
+	res := tc.queueRemoteEvent(&simplevent.ChatResync{
 		EventMeta: simplevent.EventMeta{
 			Type:         bridgev2.RemoteEventChatResync,
 			PortalKey:    key,
@@ -232,7 +232,7 @@ func (tc *TelegramClient) continueChunkedBackfill(key networkid.PortalKey) {
 		tc.finishChunkedBackfill(key, true)
 		return
 	}
-	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
+	res := tc.queueRemoteEvent(&simplevent.ChatResync{
 		EventMeta: simplevent.EventMeta{
 			Type:      bridgev2.RemoteEventChatResync,
 			PortalKey: key,

@@ -103,7 +103,7 @@ func (tc *TelegramClient) HandleMatrixViewingChat(ctx context.Context, msg *brid
 	// TODO sync topic parent space
 	meta := msg.Portal.Metadata.(*PortalMetadata)
 	if (topicID == 0 && !meta.FullSynced) || meta.LastSync.Add(24*time.Hour).Before(time.Now()) {
-		tc.userLogin.QueueRemoteEvent(&simplevent.ChatResync{
+		tc.queueRemoteEvent(&simplevent.ChatResync{
 			EventMeta: simplevent.EventMeta{
 				Type:      bridgev2.RemoteEventChatResync,
 				PortalKey: msg.Portal.PortalKey,
@@ -1228,7 +1228,7 @@ func (tc *TelegramClient) HandleMatrixReadReceipt(ctx context.Context, msg *brid
 
 	if peerType == ids.PeerTypeChannel && !msg.Portal.Metadata.(*PortalMetadata).FullSynced {
 		log.Debug().Msg("Scheduling chat resync on read receipt because channel has never got a full sync")
-		go tc.userLogin.QueueRemoteEvent(&simplevent.ChatResync{
+		go tc.queueRemoteEvent(&simplevent.ChatResync{
 			EventMeta: simplevent.EventMeta{
 				Type:      bridgev2.RemoteEventChatResync,
 				PortalKey: msg.Portal.PortalKey,

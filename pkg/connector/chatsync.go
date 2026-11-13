@@ -490,7 +490,7 @@ func (tc *TelegramClient) syncNormalDialog(
 
 	tc.fillUserLocalMeta(chatInfo, dialog)
 
-	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
+	res := tc.queueRemoteEvent(&simplevent.ChatResync{
 		ChatInfo: chatInfo,
 		EventMeta: simplevent.EventMeta{
 			Type: bridgev2.RemoteEventChatResync,
@@ -524,7 +524,7 @@ func (tc *TelegramClient) syncNormalDialog(
 	}
 
 	// Generate a read receipt from the last known read message id
-	res = tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Receipt{
+	res = tc.queueRemoteEvent(&simplevent.Receipt{
 		EventMeta: simplevent.EventMeta{
 			Type:      bridgev2.RemoteEventReadReceipt,
 			PortalKey: portalKey,
@@ -577,7 +577,7 @@ func (tc *TelegramClient) syncCommunityDialog(ctx context.Context, dialog *tg.Di
 
 	tc.fillUserLocalMeta(chatInfo, dialog)
 
-	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
+	res := tc.queueRemoteEvent(&simplevent.ChatResync{
 		ChatInfo: chatInfo,
 		EventMeta: simplevent.EventMeta{
 			Type: bridgev2.RemoteEventChatResync,
