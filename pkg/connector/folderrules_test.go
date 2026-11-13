@@ -17,11 +17,13 @@
 package connector
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 
@@ -237,4 +239,17 @@ func TestArchiveRules(t *testing.T) {
 	assert.EqualValues(t, 123, chatID)
 	_, _, err = parseFolderPeerID("bad")
 	assert.Error(t, err)
+}
+
+func TestMediaFailurePart(t *testing.T) {
+	msg := &tg.Message{ID: 7, PeerID: &tg.PeerChannel{ChannelID: 5}}
+	part := mediaFailurePart(msg, fmt.Errorf("upload: %w", bridgev2.ErrMediaTooLarge), "episode.mp4", 3920*1024*1024, 2048*1024*1024, "ru")
+	assert.Contains(t, part.Content.Body, "Файл «episode.mp4» (3.8 GB) не перенесён")
+	assert.Contains(t, part.Content.Body, "(2.0 GB)")
+	assert.Contains(t, part.Content.Body, "max_upload_size")
+	assert.Contains(t, part.Content.Body, "https://t.me/c/5/7")
+	assert.Contains(t, part.Content.FormattedBody, `<a href="https://t.me/c/5/7">Открыть в Telegram</a>`)
+
+	other := mediaFailurePart(msg, fmt.Errorf("connection reset"), "", 0, 0, "en")
+	assert.Contains(t, other.Content.Body, "Media wasn't bridged from Telegram: connection reset.")
 }

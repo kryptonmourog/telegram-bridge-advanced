@@ -330,6 +330,85 @@ func (tc *TelegramClient) convertToMatrix(
 	return
 }
 
+var mediaFailureStrings = map[string]map[string]string{
+	"en": {
+		"too_large": "📎 File “%s” (%s) wasn't bridged: it's larger than this Matrix server accepts (%s). " +
+			"For the server admin: the limit is max_upload_size in Synapse.",
+		"failed":   "⚠️ Media wasn't bridged from Telegram: %s.",
+		"open":     "Open it in Telegram",
+		"file":     "file",
+		"no_limit": "unknown limit",
+	},
+	"ru": {
+		"too_large": "📎 Файл «%s» (%s) не перенесён: он больше, чем принимает этот сервер Matrix (%s). " +
+			"Администратору: лимит задаётся параметром max_upload_size в Synapse.",
+		"failed":   "⚠️ Медиа не перенесено из Telegram: %s.",
+		"open":     "Открыть в Telegram",
+		"file":     "файл",
+		"no_limit": "лимит неизвестен",
+	},
+}
+
+func mediaFailureText(lang, key string) string {
+	if s, ok := mediaFailureStrings[lang][key]; ok {
+		return s
+	}
+	return mediaFailureStrings["en"][key]
+}
+
+func formatFileSize(size int64) string {
+	switch {
+	case size >= 1024*1024*1024:
+		return fmt.Sprintf("%.1f GB", float64(size)/1024/1024/1024)
+	case size >= 1024*1024:
+		return fmt.Sprintf("%.0f MB", float64(size)/1024/1024)
+	default:
+		return fmt.Sprintf("%.0f KB", float64(size)/1024)
+	}
+}
+
+// mediaFailurePart is the notice sent instead of media that couldn't be bridged. It says why in
+// words both users and the homeserver admin understand, and links to the message in Telegram.
+func mediaFailurePart(msg *tg.Message, err error, fileName string, size, serverLimit int64, lang string) *bridgev2.ConvertedMessagePart {
+	var body string
+	if errors.Is(err, bridgev2.ErrMediaTooLarge) {
+		if fileName == "" {
+			fileName = mediaFailureText(lang, "file")
+		}
+		limit := mediaFailureText(lang, "no_limit")
+		if serverLimit > 0 {
+			limit = formatFileSize(serverLimit)
+		}
+		body = fmt.Sprintf(mediaFailureText(lang, "too_large"), fileName, formatFileSize(size), limit)
+	} else {
+		reason := err.Error()
+		if len(reason) > 200 {
+			reason = reason[:200] + "…"
+		}
+		body = fmt.Sprintf(mediaFailureText(lang, "failed"), reason)
+	}
+	formatted := html.EscapeString(body)
+	if link := getMessageLink(msg); link != "" {
+		open := mediaFailureText(lang, "open")
+		body += " " + open + ": " + link
+		formatted += fmt.Sprintf(` <a href="%s">%s</a>`, html.EscapeString(link), html.EscapeString(open))
+	}
+	return &bridgev2.ConvertedMessagePart{
+		Type: event.EventMessage,
+		Content: &event.MessageEventContent{
+			MsgType:       event.MsgNotice,
+			Body:          body,
+			Format:        event.FormatHTML,
+			FormattedBody: formatted,
+		},
+		Extra: map[string]any{"fi.mau.telegram.media_failed": map[string]any{
+			"too_large": errors.Is(err, bridgev2.ErrMediaTooLarge),
+			"size":      size,
+			"limit":     serverLimit,
+		}},
+	}
+}
+
 func getMessageLink(msg *tg.Message) string {
 	var chatID int64
 	switch peer := msg.PeerID.(type) {
@@ -926,16 +1005,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 			} else {
 				log.Err(err).Msg("Failed to transfer media")
 			}
-			converted = &bridgev2.ConvertedMessagePart{
-				Type: event.EventMessage,
-				Content: &event.MessageEventContent{
-					MsgType: event.MsgNotice,
-					Body:    "Failed to transfer media. Check Telegram app.",
-				},
-			}
-			if errors.Is(err, bridgev2.ErrMediaTooLarge) {
-				converted.Content.Body = fmt.Sprintf("Too large file %s (%.2f MiB)", content.GetFileName(), float64(content.Info.Size)/1024/1024)
-			}
+			converted = mediaFailurePart(msg, err, content.GetFileName(), int64(content.Info.Size), tc.main.maxFileSize, tc.folderSpaces.language())
 			return
 		}
 	}
