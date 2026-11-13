@@ -168,7 +168,9 @@ func (tc *TelegramClient) convertToMatrix(
 		} else if fromID, ok := msg.GetFromID(); ok {
 			sender = ptr.Ptr(tc.getPeerSender(fromID).Sender)
 		}
-		if sender != nil {
+		// The user's own channel posts don't get a signature: it adds nothing for them, and the
+		// "Name: " fallback makes clients highlight the user's own display name in every post.
+		if sender != nil && *sender != tc.userID {
 			ghost, err := portal.Bridge.GetGhostByID(ctx, *sender)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get ghost for per message profile: %w", err)
