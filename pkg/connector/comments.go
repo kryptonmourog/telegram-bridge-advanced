@@ -612,16 +612,30 @@ var errCommentSent = bridgev2.WrapErrorInStatus(errors.New("sent as a comment"))
 
 // maybeSendComment sends a thread reply in a channel room as a comment to the post.
 func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.MatrixMessage) (handled bool, err error) {
-	if msg.ThreadRoot == nil {
+	// bridgev2 only resolves msg.ThreadRoot for networks that declare thread support, so read the
+	// thread from the event itself.
+	threadParent := msg.Content.RelatesTo.GetThreadParent()
+	if threadParent == "" {
 		return false, nil
 	}
 	channelID, ok := tc.isBroadcastPortal(msg.Portal)
 	if !ok {
 		return false, nil
 	}
-	_, postID, err := ids.ParseMessageID(msg.ThreadRoot.ID)
+	// From here on the message is never sent as a channel post, which is what a thread reply would
+	// otherwise become.
+	root := msg.ThreadRoot
+	if root == nil {
+		if root, err = tc.main.Bridge.DB.Message.GetPartByMXID(ctx, threadParent); err != nil {
+			return true, fmt.Errorf("failed to find the post of the thread: %w", err)
+		}
+	}
+	if root == nil {
+		return true, fmt.Errorf("the post of this thread isn't known to the bridge")
+	}
+	_, postID, err := ids.ParseMessageID(root.ID)
 	if err != nil {
-		return false, nil
+		return true, fmt.Errorf("the thread doesn't start at a channel post")
 	}
 	thread, err := tc.commentThreadForPost(ctx, channelID, postID)
 	if err != nil {
@@ -633,7 +647,7 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 		return true, fmt.Errorf("sending media as a comment isn't supported yet")
 	}
 	replyToID := thread.CopyID
-	if replyEvent := msg.Content.RelatesTo.GetNonFallbackReplyTo(); replyEvent != "" {
+	if replyEvent := msg.Content.RelatesTo.GetNonFallbackReplyTo(); replyEvent != "" && replyEvent != threadParent {
 		if target, err := tc.getCommentMirrorByEvent(ctx, replyEvent); err == nil && target != nil && target.GroupID == thread.GroupID {
 			replyToID = target.MsgID
 		}
