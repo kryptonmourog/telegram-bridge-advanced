@@ -27,6 +27,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/bridgev2/simplevent"
 
+	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
 )
 
@@ -163,6 +164,11 @@ func (tc *TelegramClient) resumeChunkedBackfills(ctx context.Context) {
 		if err != nil || portal == nil || portal.MXID == "" || !portal.Metadata.(*PortalMetadata).ChunkedBackfillPending {
 			continue
 		}
+		if peerType, chatID, _, err := ids.ParsePortalID(portal.ID); err == nil && tc.folderSpaces.skipArchivedPeer(peerForID(peerType, chatID)) {
+			// Archived while its backfill was running; resyncing would bring the user back into the room.
+			tc.setChunkedBackfillPending(ctx, portal, false)
+			continue
+		}
 		zerolog.Ctx(ctx).Info().Stringer("portal_key", portal.PortalKey).Msg("Resuming interrupted chunked backfill")
 		tc.startChunkedBackfill(portal.PortalKey)
 		tc.continueChunkedBackfill(portal.PortalKey)
@@ -222,6 +228,10 @@ func (tc *TelegramClient) createRoomWithBackfill(ctx context.Context, key networ
 
 // continueChunkedBackfill backfills the rest of the history after a chunk was sent.
 func (tc *TelegramClient) continueChunkedBackfill(key networkid.PortalKey) {
+	if peerType, chatID, _, err := ids.ParsePortalID(key.ID); err == nil && tc.folderSpaces.skipArchivedPeer(peerForID(peerType, chatID)) {
+		tc.finishChunkedBackfill(key, true)
+		return
+	}
 	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
 		EventMeta: simplevent.EventMeta{
 			Type:      bridgev2.RemoteEventChatResync,
@@ -237,5 +247,17 @@ func (tc *TelegramClient) continueChunkedBackfill(key networkid.PortalKey) {
 	if !res.Success && !res.Queued {
 		tc.main.Bridge.Log.Warn().Err(res.Error).Stringer("portal_key", key).Msg("Failed to continue chunked backfill")
 		tc.finishChunkedBackfill(key, false)
+	}
+}
+
+// peerForID builds a Telegram peer from a parsed portal ID.
+func peerForID(peerType ids.PeerType, chatID int64) tg.PeerClass {
+	switch peerType {
+	case ids.PeerTypeUser:
+		return &tg.PeerUser{UserID: chatID}
+	case ids.PeerTypeChat:
+		return &tg.PeerChat{ChatID: chatID}
+	default:
+		return &tg.PeerChannel{ChannelID: chatID}
 	}
 }

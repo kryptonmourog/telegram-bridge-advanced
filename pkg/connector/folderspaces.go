@@ -473,8 +473,9 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		if archived && !archiveEnabled {
 			continue
 		}
-		// Forum topics live in the forum's own space; the forum is placed instead.
-		if portal.ParentKey.ID != "" {
+		// Forum topics live in the forum's own space; the forum is placed instead. Channels of a
+		// Telegram community also have a parent, but are placed like any other chat.
+		if _, _, parentTopic, err := ids.ParsePortalID(portal.ParentKey.ID); portal.ParentKey.ID != "" && err == nil && parentTopic == ids.TopicIDSpaceRoom {
 			continue
 		}
 		chat, ok := fs.folderChatForPortal(ctx, portal, contactIDs)
