@@ -405,6 +405,7 @@ func (tc *TelegramClient) wrapFullChatInfo(portalID networkid.PortalID, fullChat
 	if chat == nil {
 		return nil, nil, fmt.Errorf("chat ID %d not found in full chat", fullChat.FullChat.GetID())
 	}
+	chat = withFullParticipantsCount(chat, fullChat.FullChat)
 
 	info, mfm, err := tc.wrapChatInfo(portalID, chat)
 	if err != nil {
@@ -621,6 +622,17 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			if err != nil {
 				return nil, err
 			}
+			if channel.ParticipantsCount == 0 && tc.main.Config.MaxMemberCount >= 0 {
+				// Topic responses usually leave out the member count, which would let topics of
+				// huge forums past max_member_count, so get it from the full channel.
+				fullChat, err := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
+					return tc.client.API().ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: id, AccessHash: accessHash})
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to get member count of forum: %w", err)
+				}
+				channel = withFullParticipantsCount(channel, fullChat.FullChat).(*tg.Channel)
+			}
 			info, mfm, err := tc.wrapChatInfo(portal.ID, channel)
 			if err != nil {
 				return nil, err
@@ -650,6 +662,22 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 	default:
 		return nil, fmt.Errorf("unsupported peer type %s", peerType)
 	}
+}
+
+// withFullParticipantsCount returns a copy of a channel with the member count from its full info
+// when the channel object doesn't have one, so that max_member_count can be checked.
+func withFullParticipantsCount(chat tg.ChatClass, full tg.ChatFullClass) tg.ChatClass {
+	channel, ok := chat.(*tg.Channel)
+	if !ok || channel.ParticipantsCount != 0 {
+		return chat
+	}
+	channelFull, ok := full.(*tg.ChannelFull)
+	if !ok || channelFull.ParticipantsCount == 0 {
+		return chat
+	}
+	channelCopy := *channel
+	channelCopy.SetParticipantsCount(channelFull.ParticipantsCount)
+	return &channelCopy
 }
 
 func getTopicInfoFromResponse(resp *tg.MessagesForumTopics, channelID int64, topicID int) (channel *tg.Channel, topic *tg.ForumTopic, err error) {

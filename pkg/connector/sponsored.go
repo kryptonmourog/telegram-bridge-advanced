@@ -46,14 +46,12 @@ var sponsoredStrings = map[string]map[string]string{
 		"header":      "Ad from Telegram",
 		"recommended": "Recommended by Telegram",
 		"advertiser":  "Advertiser",
-		"notice":      "This ad is shown by Telegram itself in channels (official Telegram sponsored messages). The administrator of this Matrix server has nothing to do with it.",
 	},
 	"ru": {
 		"sender":      "Реклама Telegram",
 		"header":      "Реклама от Telegram",
 		"recommended": "Рекомендация Telegram",
 		"advertiser":  "Рекламодатель",
-		"notice":      "Это объявление показывает сам Telegram в каналах (официальная реклама Telegram). Администратор этого сервера Matrix к нему не причастен.",
 	},
 }
 
@@ -65,7 +63,7 @@ func sponsoredText(lang, key string) string {
 }
 
 // formatSponsoredMessage replaces the body of an already converted ad with the labelled layout:
-// header, title and text, button link, advertiser info and a notice that Telegram shows the ad.
+// header, title and text, and advertiser info. The button link is left out on purpose.
 func formatSponsoredMessage(lang string, msg *tg.SponsoredMessage, content *event.MessageEventContent) {
 	header := sponsoredText(lang, "header")
 	if msg.Recommended {
@@ -77,11 +75,6 @@ func formatSponsoredMessage(lang string, msg *tg.SponsoredMessage, content *even
 			advertiser = append(advertiser, s)
 		}
 	}
-	buttonText := strings.TrimSpace(msg.ButtonText)
-	if buttonText == "" {
-		buttonText = msg.URL
-	}
-
 	var h, b strings.Builder
 	fmt.Fprintf(&h, "<p><strong>%s</strong></p><blockquote>", html.EscapeString(header))
 	fmt.Fprintf(&b, "%s\n", header)
@@ -94,14 +87,6 @@ func formatSponsoredMessage(lang string, msg *tg.SponsoredMessage, content *even
 	for _, line := range strings.Split(content.Body, "\n") {
 		fmt.Fprintf(&b, "> %s\n", line)
 	}
-	if msg.URL != "" {
-		fmt.Fprintf(&h, `<p><a href="%s">%s</a></p>`, html.EscapeString(msg.URL), html.EscapeString(buttonText))
-		if buttonText != msg.URL {
-			fmt.Fprintf(&b, "\n%s: %s\n", buttonText, msg.URL)
-		} else {
-			fmt.Fprintf(&b, "\n%s\n", msg.URL)
-		}
-	}
 	if len(advertiser) > 0 {
 		label := sponsoredText(lang, "advertiser")
 		escaped := make([]string, len(advertiser))
@@ -111,11 +96,7 @@ func formatSponsoredMessage(lang string, msg *tg.SponsoredMessage, content *even
 		fmt.Fprintf(&h, "<p>%s: %s</p>", html.EscapeString(label), strings.Join(escaped, "<br>"))
 		fmt.Fprintf(&b, "%s: %s\n", label, strings.Join(advertiser, "; "))
 	}
-	notice := sponsoredText(lang, "notice")
-	fmt.Fprintf(&h, "<p><em>%s</em></p>", html.EscapeString(notice))
-	fmt.Fprintf(&b, "\n%s", notice)
-
-	content.Body = b.String()
+	content.Body = strings.TrimSuffix(b.String(), "\n")
 	content.FormattedBody = h.String()
 	content.Format = event.FormatHTML
 }

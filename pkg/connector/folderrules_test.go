@@ -17,6 +17,7 @@
 package connector
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -202,11 +203,11 @@ func TestFormatSponsoredMessage(t *testing.T) {
 	assert.Equal(t, event.FormatHTML, content.Format)
 	assert.Contains(t, content.FormattedBody, "<strong>Реклама от Telegram</strong>")
 	assert.Contains(t, content.FormattedBody, "<blockquote><strong>Shop</strong><br>Buy &lt;things&gt;</blockquote>")
-	assert.Contains(t, content.FormattedBody, `<a href="https://example.com/?a=1&amp;b=2">Open</a>`)
+	assert.NotContains(t, content.FormattedBody, "<a ", "button link is left out")
 	assert.Contains(t, content.FormattedBody, "Рекламодатель: Shop LLC<br>INN 123")
-	assert.Contains(t, content.FormattedBody, "Администратор этого сервера Matrix к нему не причастен")
 	assert.Contains(t, content.Body, "Реклама от Telegram\n> Shop\n> Buy <things>\n")
-	assert.Contains(t, content.Body, "Open: https://example.com/?a=1&b=2")
+	assert.NotContains(t, content.Body, "example.com")
+	assert.True(t, strings.HasSuffix(content.Body, "Рекламодатель: Shop LLC; INN 123"))
 
 	recommended := &event.MessageEventContent{Body: "x", FormattedBody: "x"}
 	formatSponsoredMessage("de", &tg.SponsoredMessage{Recommended: true}, recommended)
