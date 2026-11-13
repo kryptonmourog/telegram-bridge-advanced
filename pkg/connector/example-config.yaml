@@ -148,6 +148,10 @@ video_url_preview_as_file: false
 # fail and are retried forever. When this is set, the 3 minute limit only applies to waiting for the
 # homeserver's response after the request has been sent. Empty keeps the default.
 matrix_request_timeout:
+# Split forward backfill into chunks that end at files larger than this (in megabytes). Each chunk is
+# sent to Matrix as soon as it's ready, so a room's history shows up while large videos are still
+# uploading instead of all at once at the end. 0 sends the whole backfill at once.
+backfill_split_media_mb: 0
 # Should communities on Telegram be bridged as Matrix spaces?
 bridge_communities: true
 # Should polls be sent using unstable MSC3381 event types?

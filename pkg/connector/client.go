@@ -144,6 +144,9 @@ type TelegramClient struct {
 	// channelMemberCounts caches group member counts from full channel info, so max_member_count can be
 	// checked without a getFullChannel call on every message.
 	channelMemberCounts sync.Map
+
+	// chunkedBackfill holds new messages of rooms whose forward backfill is running in chunks.
+	chunkedBackfill chunkedBackfill
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)

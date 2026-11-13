@@ -107,7 +107,7 @@ func (tc *TelegramClient) stopTakeout(ctx context.Context) error {
 	return tc.userLogin.Save(ctx)
 }
 
-func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
+func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev2.FetchMessagesParams) (out *bridgev2.FetchMessagesResponse, retErr error) {
 	if tc.metadata.IsBot {
 		return nil, fmt.Errorf("bots cannot backfill messages")
 	}
@@ -138,6 +138,17 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	peer, topicID, err := tc.inputPeerForPortalID(ctx, fetchParams.Portal.ID)
 	if err != nil {
 		return nil, err
+	}
+	if fetchParams.Forward && tc.backfillSplitBytes() > 0 {
+		// Hold new messages of the room from now on, see chunkedbackfill.go. If there's nothing to
+		// send or fetching fails, release them right away, as no chunk will complete.
+		key := fetchParams.Portal.PortalKey
+		tc.startChunkedBackfill(key)
+		defer func() {
+			if retErr != nil || out == nil || out.CompleteCallback == nil {
+				go tc.finishChunkedBackfill(key)
+			}
+		}()
 	}
 
 	var minID, offsetID int
@@ -270,10 +281,9 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		cursor = ids.MakePaginationCursorID(messages[len(messages)-1].GetID())
 	}
 
-	var backfillMessages []*bridgev2.BackfillMessage
+	var toConvert []*tg.Message
 	for _, msg := range messages {
 		log := log.With().Int("message_id", msg.GetID()).Logger()
-		ctx := log.WithContext(ctx)
 		if fetchParams.Forward && msg.GetID() <= minID {
 			// If we are doing forward backfill and we get to the anchor
 			// message, don't convert any more messages.
@@ -290,6 +300,27 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		if !ok {
 			log.Debug().Str("type", msg.TypeName()).Msg("skipping backfilling unsupported message type")
 			continue
+		}
+		toConvert = append(toConvert, message)
+	}
+	// They are returned with most recent message first, convert them oldest first.
+	slices.Reverse(toConvert)
+
+	// When splitting, a chunk ends at a large file: the messages before it are sent first, and the
+	// file is sent alone, so the room fills up while large uploads are running.
+	var splitAt int64
+	if fetchParams.Forward {
+		splitAt = tc.backfillSplitBytes()
+	}
+	hasMoreChunks := false
+	var backfillMessages []*bridgev2.BackfillMessage
+	for i, message := range toConvert {
+		log := log.With().Int("message_id", message.GetID()).Logger()
+		ctx := log.WithContext(ctx)
+		large := isLargeBackfillMedia(message, splitAt)
+		if large && len(backfillMessages) > 0 {
+			hasMoreChunks = true
+			break
 		}
 
 		sender := tc.getEventSender(message, !portal.Metadata.(*PortalMetadata).IsSuperGroup)
@@ -338,10 +369,25 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		}
 
 		backfillMessages = append(backfillMessages, &backfillMessage)
+		if large && i < len(toConvert)-1 {
+			hasMoreChunks = true
+			break
+		}
 	}
 
-	// They are returned with most recent message first, so reverse the order.
-	slices.Reverse(backfillMessages)
+	var completeCallback func()
+	if splitAt > 0 {
+		key := portal.PortalKey
+		if hasMoreChunks {
+			log.Info().
+				Int("chunk_size", len(backfillMessages)).
+				Int("remaining", len(toConvert)-len(backfillMessages)).
+				Msg("Sending forward backfill in chunks, continuing after this one")
+			completeCallback = func() { go tc.continueChunkedBackfill(key) }
+		} else {
+			completeCallback = func() { go tc.finishChunkedBackfill(key) }
+		}
+	}
 
 	return &bridgev2.FetchMessagesResponse{
 		Messages: backfillMessages,
@@ -351,6 +397,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		MarkRead: markRead,
 
 		AggressiveDeduplication: aggressiveDedup,
+		CompleteCallback:        completeCallback,
 	}, nil
 }
 

@@ -290,6 +290,18 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 
 		topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
 		portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
+		if tc.createRoomWithBackfill(ctx, portalKey, msg) {
+			log.Debug().Int("message_id", msg.ID).Msg("Creating room with backfill for new message")
+			return nil
+		}
+		if tc.chunkedBackfill.hold(portalKey, func() {
+			if err := tc.onUpdateNewMessage(context.WithoutCancel(ctx), entities, update); err != nil {
+				log.Err(err).Msg("Failed to handle message held during backfill")
+			}
+		}) {
+			log.Debug().Int("message_id", msg.ID).Msg("Holding new message until the backfill of the room is done")
+			return nil
+		}
 		msgID := ids.GetMessageIDFromMessage(msg)
 		res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Message[*tg.Message]{
 			EventMeta: simplevent.EventMeta{
