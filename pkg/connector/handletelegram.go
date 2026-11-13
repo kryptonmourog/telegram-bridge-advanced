@@ -197,6 +197,7 @@ func (tc *TelegramClient) onUpdateChannel(ctx context.Context, e tg.Entities, up
 			return chatInfo, nil
 		},
 	})
+	tc.folderSpaces.afterPossibleCreate(ctx, portalKey)
 	return resultToError(res)
 }
 
@@ -312,6 +313,7 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 			ConvertMessageFunc: tc.convertToMatrix,
 		})
 		tc.recentMessageRooms.Push(msgID, portalKey)
+		tc.folderSpaces.afterPossibleCreate(ctx, portalKey)
 
 		if err := resultToError(res); err != nil {
 			return err
@@ -1120,6 +1122,9 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 		return tc.onNotifySettings(ctx, e, update)
 	case *tg.UpdatePinnedDialogs:
 		return tc.onPinnedDialogs(ctx, e, update)
+	case *tg.UpdateDialogFilter, *tg.UpdateDialogFilters, *tg.UpdateDialogFilterOrder:
+		tc.folderSpaces.foldersChanged()
+		return nil
 	case *tg.UpdateChatDefaultBannedRights:
 		return tc.onChatDefaultBannedRights(ctx, e, update)
 	case *tg.UpdatePeerBlocked:
@@ -1770,5 +1775,6 @@ func (tc *TelegramClient) onPhoneCall(ctx context.Context, e tg.Entities, update
 			}, nil
 		},
 	})
+	tc.folderSpaces.afterPossibleCreate(ctx, tc.makePortalKeyFromID(ids.PeerTypeUser, call.AdminID, 0))
 	return resultToError(res)
 }

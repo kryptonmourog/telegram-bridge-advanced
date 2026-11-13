@@ -105,6 +105,23 @@ max_member_count: -1
 # -1 means no limit. The default of 100 is the maximum number of messages a user
 # can manually select to delete on Telegram.
 max_telegram_delete: 100
+
+# Mirror Telegram chat folders as Matrix spaces.
+# Each login gets its own root space containing only sub-spaces: one "All chats"
+# sub-space and one sub-space per Telegram folder (in Telegram's folder order).
+# Rooms are not duplicated: a room is linked from every sub-space whose folder contains the chat.
+# Requires bridge.personal_filtering_spaces to be false, as the root space is managed here.
+# The "exclude muted" and "exclude read" folder rules are ignored, as they would make
+# rooms disappear from spaces whenever they are read or muted.
+folder_spaces:
+    # Whether folder spaces are enabled.
+    enabled: false
+    # Language for the names of built-in sub-spaces (e.g. "All chats") when the user hasn't
+    # chosen one with the `folders lang` command. Supported: en, ru.
+    default_language: en
+    # When syncing chats, create rooms for chats in folders with the "contacts" or
+    # "non-contacts" rule first, then other folders, then everything else.
+    prioritize_personal_folders: true
 # Should personal avatars (that are only visible to specific users) be allowed?
 contact_avatars: false
 # Should contact names be updated from any source even if a name is already set?

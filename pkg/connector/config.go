@@ -94,6 +94,7 @@ type TelegramConfig struct {
 	ContactNames                         bool                `yaml:"contact_names"`
 	MaxMemberCount                       int                 `yaml:"max_member_count"`
 	MaxTelegramDelete                    int                 `yaml:"max_telegram_delete"`
+	FolderSpaces                         FolderSpacesConfig  `yaml:"folder_spaces"`
 	AlwaysCustomEmojiReaction            bool                `yaml:"always_custom_emoji_reaction"`
 	SavedMessagesAvatar                  id.ContentURIString `yaml:"saved_message_avatar"`
 	AlwaysTombstoneOnSupergroupMigration bool                `yaml:"always_tombstone_on_supergroup_migration"`
@@ -193,6 +194,9 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "contact_names")
 	helper.Copy(up.Int, "max_member_count")
 	helper.Copy(up.Int, "max_telegram_delete")
+	helper.Copy(up.Bool, "folder_spaces", "enabled")
+	helper.Copy(up.Str, "folder_spaces", "default_language")
+	helper.Copy(up.Bool, "folder_spaces", "prioritize_personal_folders")
 	helper.Copy(up.Bool, "always_custom_emoji_reaction")
 	helper.Copy(up.Str, "saved_message_avatar")
 	helper.Copy(up.Bool, "always_tombstone_on_supergroup_migration")
@@ -216,6 +220,7 @@ func (tc *TelegramConnector) GetConfig() (example string, data any, upgrader up.
 			{"sync"},
 			{"takeout"},
 			{"max_member_count"},
+			{"folder_spaces"},
 		},
 		Base: ExampleConfig,
 	}

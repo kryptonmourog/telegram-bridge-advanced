@@ -65,6 +65,67 @@ func fnSyncChats(ce *commands.Event) {
 	}
 }
 
+var cmdFolders = &commands.FullHandler{
+	Func: fnFolders,
+	Name: "folders",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "Show Telegram folder spaces, change their language or re-sync them",
+		Args:        "[`lang` _code_ | `resync`]",
+	},
+	RequiresLogin: true,
+}
+
+func fnFolders(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return
+	}
+	client := login.Client.(*TelegramClient)
+	if !client.folderSpaces.enabled() {
+		ce.Reply("Folder spaces are disabled. They need `network.folder_spaces.enabled: true` and `bridge.personal_filtering_spaces: false` in the bridge config.")
+		return
+	}
+	var sub string
+	if len(ce.Args) > 0 {
+		sub = strings.ToLower(ce.Args[0])
+	}
+	switch sub {
+	case "":
+		status, err := client.folderSpaces.Status(ce.Ctx)
+		if err != nil {
+			ce.Reply("Failed to get folders: %v", err)
+			return
+		}
+		ce.Reply("%s", status)
+	case "lang":
+		if len(ce.Args) < 2 {
+			ce.Reply("Usage: `folders lang <code>`, supported: %s", strings.Join(supportedFolderSpaceLanguages(), ", "))
+			return
+		}
+		lang := strings.ToLower(ce.Args[1])
+		if !isSupportedFolderSpaceLanguage(lang) {
+			ce.Reply("Unsupported language `%s`, supported: %s", lang, strings.Join(supportedFolderSpaceLanguages(), ", "))
+			return
+		}
+		if err := client.folderSpaces.SetLanguage(ce.Ctx, lang); err != nil {
+			ce.Reply("Failed to save language: %v", err)
+			return
+		}
+		ce.Reply("Language set to `%s`, space names will be updated in a few seconds", lang)
+	case "resync":
+		client.folderSpaces.needsRefetch.Store(true)
+		if err := client.folderSpaces.reconcile(ce.Ctx); err != nil {
+			ce.Reply("Failed to sync folder spaces: %v", err)
+			return
+		}
+		ce.Reply("Folder spaces synchronized")
+	default:
+		ce.Reply("Usage: `folders` (status), `folders lang <code>`, `folders resync`")
+	}
+}
+
 var cmdUpgrade = &commands.FullHandler{
 	Func: fnUpgrade,
 	Name: "upgrade",

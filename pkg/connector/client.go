@@ -139,6 +139,8 @@ type TelegramClient struct {
 	stickerPacksByName   map[string]*stickerPackCache
 	stickerPacksByID     map[int64]*stickerPackCache
 	stickerPackCacheLock sync.Mutex
+
+	folderSpaces *folderSpaceManager
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)
@@ -204,6 +206,7 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 		clientInitialized: exsync.NewEvent(),
 		clientDone:        exsync.NewEvent(),
 	}
+	client.folderSpaces = newFolderSpaceManager(&client)
 
 	if !login.Metadata.(*UserLoginMetadata).Session.HasAuthKey() {
 		return &client, nil
@@ -555,6 +558,7 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 		if tc.reactionCapsStale.CompareAndSwap(true, false) {
 			go tc.resendCapabilities(ctx)
 		}
+		tc.folderSpaces.foldersChangedAfter(folderSpacesAfterConnectDelay)
 		// If takeout dialog sync is enabled, we assume it'll resume from a getTakeoutID call.
 		// If not, resume dialog sync manually here.
 		if !tc.isNewLogin && !tc.main.Config.Takeout.DialogSync && !tc.metadata.IsBot {
@@ -632,6 +636,8 @@ func (tc *TelegramClient) LogoutRemote(ctx context.Context) {
 	}
 
 	tc.Disconnect()
+
+	tc.folderSpaces.deleteSubspaces(ctx)
 
 	log.Info().Msg("Deleting user state")
 

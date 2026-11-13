@@ -81,6 +81,13 @@ func (tc *TelegramClient) syncChats(ctx context.Context, takeoutID int64, onLogi
 	}
 	createLimit := subtractLimit(tc.main.Config.Sync.CreateLimit, tc.metadata.DialogSyncCount)
 
+	// With folder spaces, dialogs from all pages are collected first and rooms are created in folder
+	// priority order. The pagination cursor is still saved per page, so if the bridge stops mid-sync,
+	// collected but unhandled dialogs aren't revisited; their rooms are created on the next message.
+	prioritize := takeoutID == 0 && tc.main.Config.FolderSpaces.PrioritizePersonalFolders && tc.folderSpaces.enabled()
+	totalCreateLimit := createLimit
+	var collected []prioritizedDialog
+
 	var req tg.MessagesGetDialogsRequest
 	isFirst := true
 	if tc.metadata.DialogSyncCursor != "" {
@@ -148,8 +155,11 @@ func (tc *TelegramClient) syncChats(ctx context.Context, takeoutID int64, onLogi
 		if updateLimit > 0 && len(dialogList) > updateLimit {
 			dialogList = dialogList[:updateLimit]
 		}
-		err = tc.handleDialogs(ctx, dialogList, dialogs, createLimit)
-		if err != nil {
+		if prioritize {
+			for _, d := range dialogList {
+				collected = append(collected, prioritizedDialog{dialog: d, page: dialogs})
+			}
+		} else if err = tc.handleDialogs(ctx, dialogList, dialogs, createLimit); err != nil {
 			return fmt.Errorf("failed to handle dialogs: %w", err)
 		}
 		updateLimit = subtractLimit(updateLimit, len(dialogList))
@@ -174,6 +184,11 @@ func (tc *TelegramClient) syncChats(ctx context.Context, takeoutID int64, onLogi
 		req.OffsetID = tc.metadata.DialogSyncOffsetID
 		req.OffsetDate = tc.metadata.DialogSyncOffsetDate
 	}
+	if prioritize && len(collected) > 0 {
+		if err := tc.handlePrioritizedDialogs(ctx, collected, totalCreateLimit); err != nil {
+			return fmt.Errorf("failed to handle dialogs: %w", err)
+		}
+	}
 	// TODO fetch and sync block list too
 	if isFullSync {
 		tc.metadata.DialogSyncComplete = true
@@ -186,6 +201,7 @@ func (tc *TelegramClient) syncChats(ctx context.Context, takeoutID int64, onLogi
 		}
 	}
 	log.Info().Msg("Finished dialog sync")
+	tc.folderSpaces.schedule(folderSpacesAfterChangeDelay)
 	return nil
 }
 
@@ -248,34 +264,81 @@ func (tc *TelegramClient) resetPinnedDialogs(ctx context.Context, dialogs []tg.D
 	return tc.userLogin.Save(ctx)
 }
 
+// dialogPage holds the entities returned with one page of dialogs, indexed by ID.
+type dialogPage struct {
+	users    map[int64]tg.UserClass
+	chats    map[int64]tg.ChatClass
+	messages map[networkid.MessageID]tg.MessageClass
+}
+
+func newDialogPage(meta tg.ModifiedMessagesDialogs) *dialogPage {
+	page := &dialogPage{
+		users:    map[int64]tg.UserClass{},
+		chats:    map[int64]tg.ChatClass{},
+		messages: map[networkid.MessageID]tg.MessageClass{},
+	}
+	for _, user := range meta.GetUsers() {
+		page.users[user.GetID()] = user
+	}
+	for _, chat := range meta.GetChats() {
+		page.chats[chat.GetID()] = chat
+	}
+	for _, message := range meta.GetMessages() {
+		page.messages[ids.GetMessageIDFromMessage(message)] = message
+	}
+	return page
+}
+
+func (tc *TelegramClient) handleDialog(ctx context.Context, d tg.DialogClass, page *dialogPage, allowCreate bool) error {
+	switch dialog := d.(type) {
+	case *tg.Dialog:
+		return tc.syncNormalDialog(ctx, dialog, allowCreate, page.users, page.chats, page.messages)
+	case *tg.DialogCommunity:
+		return tc.syncCommunityDialog(ctx, dialog, page.chats)
+	//case *tg.DialogFolder:
+	default:
+		return nil
+	}
+}
+
 func (tc *TelegramClient) handleDialogs(
 	ctx context.Context, dialogList []tg.DialogClass, meta tg.ModifiedMessagesDialogs, createLimit int,
 ) error {
-	users := map[int64]tg.UserClass{}
-	for _, user := range meta.GetUsers() {
-		users[user.GetID()] = user
-	}
-	chats := map[int64]tg.ChatClass{}
-	for _, chat := range meta.GetChats() {
-		chats[chat.GetID()] = chat
-	}
-	messages := map[networkid.MessageID]tg.MessageClass{}
-	for _, message := range meta.GetMessages() {
-		messages[ids.GetMessageIDFromMessage(message)] = message
-	}
-
+	page := newDialogPage(meta)
 	for i, d := range dialogList {
-		var err error
-		switch dialog := d.(type) {
-		case *tg.Dialog:
-			err = tc.syncNormalDialog(ctx, dialog, createLimit < 0 || i < createLimit, users, chats, messages)
-		case *tg.DialogCommunity:
-			err = tc.syncCommunityDialog(ctx, dialog, chats)
-		//case *tg.DialogFolder:
-		default:
-			continue
+		if err := tc.handleDialog(ctx, d, page, createLimit < 0 || i < createLimit); err != nil {
+			return err
 		}
-		if err != nil {
+	}
+	return nil
+}
+
+// handlePrioritizedDialogs syncs dialogs collected from all pages in folder priority order
+// (personal folders, other folders, the rest). createLimit applies to that order.
+func (tc *TelegramClient) handlePrioritizedDialogs(ctx context.Context, dialogs []prioritizedDialog, createLimit int) error {
+	pages := map[tg.ModifiedMessagesDialogs]*dialogPage{}
+	pageOf := func(meta tg.ModifiedMessagesDialogs) *dialogPage {
+		page, ok := pages[meta]
+		if !ok {
+			page = newDialogPage(meta)
+			pages[meta] = page
+		}
+		return page
+	}
+	for i := range dialogs {
+		if dialog, ok := dialogs[i].dialog.(*tg.Dialog); ok {
+			page := pageOf(dialogs[i].page)
+			dialogs[i].chat = folderChatFromEntities(dialog.Peer, tc.telegramUserID, page.users, page.chats)
+		}
+	}
+	entries, err := tc.folderSpaces.Entries(ctx)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to get Telegram folders, syncing dialogs in default order")
+	} else {
+		dialogs = sortDialogsByFolderPriority(entries, dialogs)
+	}
+	for i, d := range dialogs {
+		if err = tc.handleDialog(ctx, d.dialog, pageOf(d.page), createLimit < 0 || i < createLimit); err != nil {
 			return err
 		}
 	}

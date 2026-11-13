@@ -118,6 +118,8 @@ type UserLoginMetadata struct {
 
 	PinnedDialogs []networkid.PortalID `json:"pinned_dialogs,omitempty"`
 
+	FolderSpaces *FolderSpacesMetadata `json:"folder_spaces,omitempty"`
+
 	PushEncryptionKey []byte `json:"push_encryption_key,omitempty"`
 }
 
