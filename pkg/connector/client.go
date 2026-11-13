@@ -141,6 +141,9 @@ type TelegramClient struct {
 	stickerPackCacheLock sync.Mutex
 
 	folderSpaces *folderSpaceManager
+	// channelMemberCounts caches group member counts from full channel info, so max_member_count can be
+	// checked without a getFullChannel call on every message.
+	channelMemberCounts sync.Map
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)

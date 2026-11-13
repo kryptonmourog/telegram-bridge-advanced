@@ -625,13 +625,13 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			if channel.ParticipantsCount == 0 && tc.main.Config.MaxMemberCount >= 0 {
 				// Topic responses usually leave out the member count, which would let topics of
 				// huge forums past max_member_count, so get it from the full channel.
-				fullChat, err := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
-					return tc.client.API().ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: id, AccessHash: accessHash})
-				})
+				count, err := tc.getForumMemberCount(ctx, id, accessHash)
 				if err != nil {
-					return nil, fmt.Errorf("failed to get member count of forum: %w", err)
+					return nil, err
 				}
-				channel = withFullParticipantsCount(channel, fullChat.FullChat).(*tg.Channel)
+				channelCopy := *channel
+				channelCopy.SetParticipantsCount(count)
+				channel = &channelCopy
 			}
 			info, mfm, err := tc.wrapChatInfo(portal.ID, channel)
 			if err != nil {
@@ -644,11 +644,19 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 			}
 			return info, nil
 		}
+		if cached, ok := tc.channelMemberCounts.Load(id); ok && time.Since(cached.(channelMemberCount).fetchedAt) < time.Hour &&
+			!tc.main.Config.ShouldBridge(cached.(channelMemberCount).count) {
+			return nil, fmt.Errorf("too many participants (%d) in chat %d", cached.(channelMemberCount).count, id)
+		}
 		fullChat, err := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
 			return tc.client.API().ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: id, AccessHash: accessHash})
 		})
 		if err != nil {
 			return nil, err
+		}
+		if channelFull, ok := fullChat.FullChat.(*tg.ChannelFull); ok && channelFull.ParticipantsCount > 0 && isMegagroup(fullChat.Chats, id) {
+			// max_member_count only applies to groups, so channels with a feed are never cached
+			tc.channelMemberCounts.Store(id, channelMemberCount{count: channelFull.ParticipantsCount, fetchedAt: time.Now()})
 		}
 		info, mfm, err := tc.wrapFullChatInfo(portal.ID, fullChat)
 		if err != nil {
@@ -662,6 +670,41 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 	default:
 		return nil, fmt.Errorf("unsupported peer type %s", peerType)
 	}
+}
+
+func isMegagroup(chats []tg.ChatClass, channelID int64) bool {
+	for _, c := range chats {
+		if channel, ok := c.(*tg.Channel); ok && channel.ID == channelID {
+			return channel.Megagroup
+		}
+	}
+	return false
+}
+
+// channelMemberCount is a cached group member count, see TelegramClient.channelMemberCounts.
+type channelMemberCount struct {
+	count     int
+	fetchedAt time.Time
+}
+
+// getForumMemberCount gets a forum's (always a group) member count from its full info, cached for an hour so that
+// busy forums don't run into flood waits on every message.
+func (tc *TelegramClient) getForumMemberCount(ctx context.Context, channelID, accessHash int64) (int, error) {
+	if cached, ok := tc.channelMemberCounts.Load(channelID); ok && time.Since(cached.(channelMemberCount).fetchedAt) < time.Hour {
+		return cached.(channelMemberCount).count, nil
+	}
+	fullChat, err := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
+		return tc.client.API().ChannelsGetFullChannel(ctx, &tg.InputChannel{ChannelID: channelID, AccessHash: accessHash})
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to get member count of forum: %w", err)
+	}
+	channelFull, ok := fullChat.FullChat.(*tg.ChannelFull)
+	if !ok {
+		return 0, fmt.Errorf("full info of forum %d is %T, not *tg.ChannelFull", channelID, fullChat.FullChat)
+	}
+	tc.channelMemberCounts.Store(channelID, channelMemberCount{count: channelFull.ParticipantsCount, fetchedAt: time.Now()})
+	return channelFull.ParticipantsCount, nil
 }
 
 // withFullParticipantsCount returns a copy of a channel with the member count from its full info
