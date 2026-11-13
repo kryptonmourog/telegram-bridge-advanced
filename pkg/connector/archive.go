@@ -178,8 +178,11 @@ func (fs *folderSpaceManager) fetchArchived(ctx context.Context) error {
 		}
 		list := resp.GetDialogs()
 		for _, d := range list {
+			// The response also lists the pinned chats of the main list, only take the archived ones.
 			if dialog, ok := d.(*tg.Dialog); ok {
-				peers[folderPeerIDFromPeer(dialog.Peer)] = struct{}{}
+				if folderID, ok := dialog.GetFolderID(); ok && folderID == archiveFolderID {
+					peers[folderPeerIDFromPeer(dialog.Peer)] = struct{}{}
+				}
 			}
 		}
 		if len(list) < req.Limit {
