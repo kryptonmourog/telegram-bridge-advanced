@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
@@ -192,4 +193,23 @@ func TestSortDialogsByFolderPriority(t *testing.T) {
 	// personal folders first, then other folders, then the rest; order inside each group is kept
 	assert.Equal(t, []string{"user:1", "user:1000", "chat:4", "channel:5", "channel:6", "user:2"}, got)
 	assert.Equal(t, chatChannel, in[0].chat, "input slice is not modified")
+}
+
+func TestFormatSponsoredMessage(t *testing.T) {
+	content := &event.MessageEventContent{Body: "Buy <things>", FormattedBody: "Buy &lt;things&gt;"}
+	msg := &tg.SponsoredMessage{Title: "Shop", URL: "https://example.com/?a=1&b=2", ButtonText: "Open", SponsorInfo: "Shop LLC", AdditionalInfo: "INN 123"}
+	formatSponsoredMessage("ru", msg, content)
+	assert.Equal(t, event.FormatHTML, content.Format)
+	assert.Contains(t, content.FormattedBody, "<strong>Реклама от Telegram</strong>")
+	assert.Contains(t, content.FormattedBody, "<blockquote><strong>Shop</strong><br>Buy &lt;things&gt;</blockquote>")
+	assert.Contains(t, content.FormattedBody, `<a href="https://example.com/?a=1&amp;b=2">Open</a>`)
+	assert.Contains(t, content.FormattedBody, "Рекламодатель: Shop LLC<br>INN 123")
+	assert.Contains(t, content.FormattedBody, "Администратор этого сервера Matrix к нему не причастен")
+	assert.Contains(t, content.Body, "Реклама от Telegram\n> Shop\n> Buy <things>\n")
+	assert.Contains(t, content.Body, "Open: https://example.com/?a=1&b=2")
+
+	recommended := &event.MessageEventContent{Body: "x", FormattedBody: "x"}
+	formatSponsoredMessage("de", &tg.SponsoredMessage{Recommended: true}, recommended)
+	assert.Contains(t, recommended.Body, "Recommended by Telegram", "unknown language falls back to English")
+	assert.NotContains(t, recommended.Body, "Advertiser")
 }

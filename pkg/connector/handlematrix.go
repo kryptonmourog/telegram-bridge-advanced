@@ -47,7 +47,6 @@ import (
 	"go.mau.fi/webp"
 	"golang.org/x/exp/maps"
 	_ "golang.org/x/image/webp"
-	"golang.org/x/net/html"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
@@ -194,19 +193,13 @@ func (tc *TelegramClient) pollSponsoredMessage(ctx context.Context, portal *brid
 			"recommended":     msg.Recommended,
 		},
 	}
-	var fromStr string
-	if msg.SponsorInfo != "" {
-		fromStr = fmt.Sprintf(" from %s", html.EscapeString(msg.SponsorInfo))
+	formatSponsoredMessage(tc.folderSpaces.language(), &msg, content)
+	intent, err := tc.sponsoredMessageIntent(ctx, portal.MXID)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to prepare sponsored message ghost, sending as bridge bot")
+		intent = tc.main.Bridge.Bot
 	}
-	prefix := "Ad"
-	if msg.Recommended {
-		prefix = "Recommended"
-	}
-	content.FormattedBody = fmt.Sprintf(
-		`<strong>%s: %s</strong><blockquote>%s</blockquote><p>Sponsored message%s - <a href="%s">%s</a></p>`,
-		prefix, html.EscapeString(msg.Title), content.FormattedBody, fromStr, msg.URL, msg.ButtonText,
-	)
-	sendResp, err := tc.main.Bridge.Bot.SendMessage(ctx, portal.MXID, event.EventMessage, &event.Content{
+	sendResp, err := intent.SendMessage(ctx, portal.MXID, event.EventMessage, &event.Content{
 		Raw:    extra,
 		Parsed: content,
 	}, &bridgev2.MatrixSendExtra{Timestamp: time.Now()})
