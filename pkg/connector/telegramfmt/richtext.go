@@ -301,15 +301,23 @@ func (r *rtParser) parseBlock(ctx context.Context, block tg.PageBlockClass) {
 		r.writeWrappedItem(ctx, "h6", v.Text)
 	case *tg.PageBlockMath:
 		r.printf(`<div data-mx-maths="%[1]s"><code>%[1]s</code></div>`, html.EscapeString(v.Source))
-	//case *tg.PageBlockPhoto:
-	//case *tg.PageBlockVideo:
-	//case *tg.PageBlockAudio:
-	//case *tg.PageBlockCover:
+	case *tg.PageBlockPhoto:
+		r.writePhoto(ctx, v)
+	case *tg.PageBlockVideo:
+		r.writeAttachedMedia(ctx, "🎬", "Video", v.Caption)
+	case *tg.PageBlockAudio:
+		r.writeAttachedMedia(ctx, "🎵", "Audio", v.Caption)
+	case *tg.PageBlockCover:
+		r.parseBlock(ctx, v.Cover)
+	case *tg.PageBlockCollage:
+		r.parseBlocks(ctx, v.Items)
+		r.writePageCaption(ctx, v.Caption)
+	case *tg.PageBlockSlideshow:
+		r.parseBlocks(ctx, v.Items)
+		r.writePageCaption(ctx, v.Caption)
 	//case *tg.PageBlockRelatedArticles:
 	//case *tg.PageBlockEmbed:
 	//case *tg.PageBlockEmbedPost:
-	//case *tg.PageBlockCollage:
-	//case *tg.PageBlockSlideshow:
 	//case *tg.PageBlockMap:
 	default:
 		r.printf("<p>Unsupported block type: <code>%T</code></p>", v)
@@ -496,6 +504,10 @@ func findRichTextCustomEmojisInBlocks(out *[]int64, blocks []tg.PageBlockClass) 
 		if t, ok := block.(captionable); ok {
 			findRichTextCustomEmojisInText(out, t.GetCaption())
 		}
+		if t, ok := block.(pageCaptionBlock); ok {
+			caption := t.GetCaption()
+			findRichTextCustomEmojisInText(out, caption.Text, caption.Credit)
+		}
 		if t, ok := block.(authorable); ok {
 			findRichTextCustomEmojisInText(out, t.GetAuthor())
 		}
@@ -506,6 +518,12 @@ func findRichTextCustomEmojisInBlocks(out *[]int64, blocks []tg.PageBlockClass) 
 			findRichTextCustomEmojisInBlocks(out, t.GetBlocks())
 		}
 		switch typedBlock := block.(type) {
+		case *tg.PageBlockCover:
+			findRichTextCustomEmojisInBlocks(out, []tg.PageBlockClass{typedBlock.Cover})
+		case *tg.PageBlockCollage:
+			findRichTextCustomEmojisInBlocks(out, typedBlock.Items)
+		case *tg.PageBlockSlideshow:
+			findRichTextCustomEmojisInBlocks(out, typedBlock.Items)
 		case *tg.PageBlockList:
 			for _, item := range typedBlock.Items {
 				if t, ok := item.(textable); ok {

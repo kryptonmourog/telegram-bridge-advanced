@@ -38,8 +38,10 @@ type UserInfo struct {
 }
 
 type FormatParams struct {
-	Bridge                *bridgev2.Bridge
-	CustomEmojis          map[networkid.EmojiID]emojis.EmojiInfo
+	Bridge       *bridgev2.Bridge
+	CustomEmojis map[networkid.EmojiID]emojis.EmojiInfo
+	// RichPhotos are the photos of a rich message uploaded to Matrix, by Telegram photo ID.
+	RichPhotos            map[int64]RichPhoto
 	GetUserInfoByUsername func(ctx context.Context, username string) (UserInfo, error)
 	GetUserInfoByID       func(ctx context.Context, id int64) (UserInfo, error)
 	NormalizeURL          func(ctx context.Context, url string) string
@@ -55,6 +57,12 @@ func (fp FormatParams) WithCustomEmojis(emojis map[networkid.EmojiID]emojis.Emoj
 		NormalizeURL:          fp.NormalizeURL,
 		MakePortalKeyFromID:   fp.MakePortalKeyFromID,
 	}
+}
+
+// WithRichPhotos returns the params with the uploaded photos of a rich message.
+func (fp FormatParams) WithRichPhotos(photos map[int64]RichPhoto) FormatParams {
+	fp.RichPhotos = photos
+	return fp
 }
 
 type formatContext struct {

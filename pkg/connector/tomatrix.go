@@ -183,8 +183,10 @@ func (tc *TelegramClient) convertToMatrix(
 
 	cm = &bridgev2.ConvertedMessage{}
 	hasher := sha256.New()
+	var richMediaParts []*bridgev2.ConvertedMessagePart
 	if rm, ok := msg.GetRichMessage(); ok {
-		content := tc.parseRichText(ctx, &rm)
+		var content *event.MessageEventContent
+		content, richMediaParts = tc.parseRichText(ctx, portal, intent, msg, &rm)
 		// TODO might be better to hash the raw data instead of the converted one
 		hasher.Write([]byte(content.FormattedBody))
 		cm.Parts = []*bridgev2.ConvertedMessagePart{{
@@ -234,6 +236,9 @@ func (tc *TelegramClient) convertToMatrix(
 			cm.Disappear = *disappearingSetting
 		}
 	}
+	// Videos and audio of rich messages can't be shown inline, so they follow the message. Added after
+	// the caption merge above, which only expects the text and the message's own media.
+	cm.Parts = append(cm.Parts, richMediaParts...)
 	if len(cm.Parts) == 0 {
 		cm.Parts = append(cm.Parts, &bridgev2.ConvertedMessagePart{
 			Type: event.EventMessage,
@@ -466,7 +471,13 @@ func (tc *TelegramClient) parseBodyAndHTML(ctx context.Context, message string, 
 	return telegramfmt.Parse(ctx, message, entities, tc.telegramFmtParams.WithCustomEmojis(customEmojis))
 }
 
-func (tc *TelegramClient) parseRichText(ctx context.Context, message *tg.RichMessage) *event.MessageEventContent {
+func (tc *TelegramClient) parseRichText(
+	ctx context.Context,
+	portal *bridgev2.Portal,
+	intent bridgev2.MatrixAPI,
+	msg *tg.Message,
+	message *tg.RichMessage,
+) (*event.MessageEventContent, []*bridgev2.ConvertedMessagePart) {
 	customEmojiIDs := telegramfmt.FindRichTextCustomEmojis(message.Blocks)
 	customEmojis, err := tc.transferEmojisToMatrix(ctx, customEmojiIDs)
 	if err != nil {
@@ -474,7 +485,98 @@ func (tc *TelegramClient) parseRichText(ctx context.Context, message *tg.RichMes
 			Ints64("emoji_ids", customEmojiIDs).
 			Msg("Failed to transfer custom emojis to Matrix")
 	}
-	return telegramfmt.ParseRichText(ctx, message, tc.telegramFmtParams.WithCustomEmojis(customEmojis))
+	richMedia := telegramfmt.FindRichTextMedia(message.Blocks)
+	photos := tc.transferRichPhotos(ctx, portal, intent, message, richMedia.PhotoIDs)
+	parts := tc.convertRichDocuments(ctx, portal, intent, msg, message, richMedia.DocumentIDs)
+	params := tc.telegramFmtParams.WithCustomEmojis(customEmojis).WithRichPhotos(photos)
+	return telegramfmt.ParseRichText(ctx, message, params), parts
+}
+
+// transferRichPhotos uploads the photos shown by rich message blocks so that they can be put inline.
+// Photos that fail, or would be encrypted (inline images can't be), are left out and shown as a
+// placeholder.
+func (tc *TelegramClient) transferRichPhotos(
+	ctx context.Context,
+	portal *bridgev2.Portal,
+	intent bridgev2.MatrixAPI,
+	message *tg.RichMessage,
+	photoIDs []int64,
+) map[int64]telegramfmt.RichPhoto {
+	if len(photoIDs) == 0 {
+		return nil
+	}
+	log := zerolog.Ctx(ctx)
+	out := make(map[int64]telegramfmt.RichPhoto, len(photoIDs))
+	for _, photoID := range photoIDs {
+		if _, done := out[photoID]; done {
+			continue
+		}
+		photo := findRichMessagePhoto(message, photoID)
+		if photo == nil {
+			log.Warn().Int64("photo_id", photoID).Msg("Photo of rich message block not found in message")
+			continue
+		}
+		uri, encrypted, info, err := media.NewTransferer(tc.client.API()).
+			WithRoomID(portal.MXID).
+			WithPhoto(photo).
+			Transfer(ctx, tc.main.Store, intent)
+		if err != nil {
+			log.Err(err).Int64("photo_id", photoID).Msg("Failed to transfer photo of rich message")
+			continue
+		} else if encrypted != nil || uri == "" {
+			continue
+		}
+		rp := telegramfmt.RichPhoto{URL: uri}
+		if info != nil {
+			rp.Width, rp.Height = info.Width, info.Height
+		}
+		out[photoID] = rp
+	}
+	return out
+}
+
+func findRichMessagePhoto(message *tg.RichMessage, photoID int64) *tg.Photo {
+	for _, pc := range message.Photos {
+		if photo, ok := pc.(*tg.Photo); ok && photo.ID == photoID {
+			return photo
+		}
+	}
+	return nil
+}
+
+// convertRichDocuments converts the videos and audio of rich message blocks into separate message
+// parts.
+func (tc *TelegramClient) convertRichDocuments(
+	ctx context.Context,
+	portal *bridgev2.Portal,
+	intent bridgev2.MatrixAPI,
+	msg *tg.Message,
+	message *tg.RichMessage,
+	documentIDs []int64,
+) (parts []*bridgev2.ConvertedMessagePart) {
+	seen := make(map[int64]struct{}, len(documentIDs))
+	for _, documentID := range documentIDs {
+		if _, ok := seen[documentID]; ok {
+			continue
+		}
+		seen[documentID] = struct{}{}
+		var document *tg.Document
+		for _, dc := range message.Documents {
+			if doc, ok := dc.(*tg.Document); ok && doc.ID == documentID {
+				document = doc
+				break
+			}
+		}
+		if document == nil {
+			zerolog.Ctx(ctx).Warn().Int64("document_id", documentID).Msg("Document of rich message block not found in message")
+			continue
+		}
+		part, _ := tc.convertMediaRequiringUpload(ctx, portal, intent, msg, &tg.MessageMediaDocument{Document: document}, false)
+		if part != nil {
+			parts = append(parts, part)
+		}
+	}
+	return parts
 }
 
 func (tc *TelegramClient) webpageToBeeperLinkPreview(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, msg *tg.Message, msgMedia tg.MessageMediaClass) (preview *event.BeeperLinkPreview, err error) {
