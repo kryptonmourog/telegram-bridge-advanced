@@ -145,8 +145,10 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		key := fetchParams.Portal.PortalKey
 		tc.startChunkedBackfill(key)
 		defer func() {
-			if retErr != nil || out == nil || out.CompleteCallback == nil {
-				go tc.finishChunkedBackfill(key)
+			if retErr != nil {
+				go tc.finishChunkedBackfill(key, false)
+			} else if out == nil || out.CompleteCallback == nil {
+				go tc.finishChunkedBackfill(key, true)
 			}
 		}()
 	}
@@ -327,7 +329,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 			key := portal.PortalKey
 			defer func() {
 				if retErr == nil && out != nil {
-					out.CompleteCallback = func() { go tc.finishChunkedBackfill(key) }
+					out.CompleteCallback = func() { go tc.finishChunkedBackfill(key, true) }
 				}
 			}()
 		}
@@ -409,7 +411,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 				Msg("Sending forward backfill in chunks, continuing after this one")
 			completeCallback = func() { go tc.continueChunkedBackfill(key) }
 		} else {
-			completeCallback = func() { go tc.finishChunkedBackfill(key) }
+			completeCallback = func() { go tc.finishChunkedBackfill(key, true) }
 		}
 	}
 

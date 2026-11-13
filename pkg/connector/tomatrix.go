@@ -219,6 +219,10 @@ func (tc *TelegramClient) convertToMatrix(
 
 	var contentURI id.ContentURIString
 	mediaPart, disappearingSetting, mediaHashID := tc.mediaToMatrix(ctx, portal, intent, msg)
+	if ctx.Err() != nil {
+		// Stopping interrupted the media transfer; don't bridge a failure notice for it.
+		return nil, fmt.Errorf("conversion interrupted: %w", ctx.Err())
+	}
 	if mediaPart != nil {
 		hasher.Write(mediaHashID)
 		cm.Parts = append(cm.Parts, mediaPart)

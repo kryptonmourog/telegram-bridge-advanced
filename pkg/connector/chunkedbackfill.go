@@ -132,7 +132,7 @@ func isLargeBackfillMedia(msg *tg.Message, limit int64) bool {
 func (tc *TelegramClient) startChunkedBackfill(key networkid.PortalKey) {
 	tc.chunkedBackfill.start(key, func() {
 		tc.main.Bridge.Log.Warn().Stringer("portal_key", key).Msg("Chunked backfill didn't finish in time, releasing held messages")
-		tc.finishChunkedBackfill(key)
+		tc.finishChunkedBackfill(key, false)
 	})
 }
 
@@ -169,10 +169,14 @@ func (tc *TelegramClient) resumeChunkedBackfills(ctx context.Context) {
 	}
 }
 
-// finishChunkedBackfill releases the new messages held during the backfill of the portal.
-func (tc *TelegramClient) finishChunkedBackfill(key networkid.PortalKey) {
-	if portal, err := tc.main.Bridge.GetExistingPortalByKey(context.Background(), key); err == nil && portal != nil {
-		tc.setChunkedBackfillPending(context.Background(), portal, false)
+// finishChunkedBackfill releases the new messages held during the backfill of the portal. Only a
+// backfill that sent its last chunk is done; one that failed or was interrupted (e.g. by stopping the
+// bridge) stays pending and is resumed when the client connects again.
+func (tc *TelegramClient) finishChunkedBackfill(key networkid.PortalKey, completed bool) {
+	if completed {
+		if portal, err := tc.main.Bridge.GetExistingPortalByKey(context.Background(), key); err == nil && portal != nil {
+			tc.setChunkedBackfillPending(context.Background(), portal, false)
+		}
 	}
 	events := tc.chunkedBackfill.finish(key)
 	if len(events) > 0 {
@@ -232,6 +236,6 @@ func (tc *TelegramClient) continueChunkedBackfill(key networkid.PortalKey) {
 	})
 	if !res.Success && !res.Queued {
 		tc.main.Bridge.Log.Warn().Err(res.Error).Stringer("portal_key", key).Msg("Failed to continue chunked backfill")
-		tc.finishChunkedBackfill(key)
+		tc.finishChunkedBackfill(key, false)
 	}
 }
