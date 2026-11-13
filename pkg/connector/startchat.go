@@ -234,11 +234,11 @@ func (tc *TelegramClient) SearchUsers(ctx context.Context, query string) (resp [
 	return resp, nil
 }
 
-func (tc *TelegramClient) GetContactList(ctx context.Context) (resp []*bridgev2.ResolveIdentifierResponse, err error) {
+// getContactsCached returns the contact list, refreshing it from Telegram at most every 10 minutes.
+func (tc *TelegramClient) getContactsCached(ctx context.Context) (contacts *tg.ContactsContacts, err error) {
 	tc.contactsLock.Lock()
 	defer tc.contactsLock.Unlock()
-	var contacts *tg.ContactsContacts
-	if time.Since(tc.lastContactReq) > 10*time.Minute {
+	if tc.cachedContacts == nil || time.Since(tc.lastContactReq) > 10*time.Minute {
 		contacts, err = APICallWithOnlyUserUpdates(ctx, tc, func() (*tg.ContactsContacts, error) {
 			c, err := tc.client.API().ContactsGetContacts(ctx, tc.cachedContactsHash)
 			if err != nil {
@@ -265,6 +265,14 @@ func (tc *TelegramClient) GetContactList(ctx context.Context) (resp []*bridgev2.
 		tc.lastContactReq = time.Now()
 	} else {
 		contacts = tc.cachedContacts
+	}
+	return contacts, nil
+}
+
+func (tc *TelegramClient) GetContactList(ctx context.Context) (resp []*bridgev2.ResolveIdentifierResponse, err error) {
+	contacts, err := tc.getContactsCached(ctx)
+	if err != nil {
+		return nil, err
 	}
 	users := map[int64]tg.UserClass{}
 	for _, user := range contacts.GetUsers() {
