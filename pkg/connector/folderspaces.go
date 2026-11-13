@@ -29,6 +29,7 @@ import (
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
@@ -121,6 +122,9 @@ type folderSpaceManager struct {
 	entries []folderEntry
 	// needsRefetch is atomic so that Telegram update handlers never wait for a running reconcile.
 	needsRefetch atomic.Bool
+
+	// rootStateChecked is set once the root space's actual state has been cleaned up in this run.
+	rootStateChecked bool
 
 	scheduleLock sync.Mutex
 	scheduled    bool
@@ -360,6 +364,22 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 			delete(meta.RootChildren, room)
 		}
 	}
+	// Once per run, also remove links the bridge no longer knows about (e.g. rooms of deleted portals
+	// that personal_filtering_spaces linked from the root before folder spaces were enabled).
+	if !fs.rootStateChecked {
+		stale, err := fs.staleSpaceChildren(ctx, root, wantRoot)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to read root space state, not removing unknown links")
+		} else {
+			for _, room := range stale {
+				if err = fs.setSpaceChild(ctx, root, room, "", false); err != nil {
+					return err
+				}
+				stats.unlinked++
+			}
+			fs.rootStateChecked = true
+		}
+	}
 
 	// 4. Rooms of this login and the sub-spaces they belong in.
 	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, ul.UserLogin)
@@ -444,6 +464,30 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		Int("links_removed", stats.unlinked).
 		Msg("Reconciled folder spaces")
 	return nil
+}
+
+// staleSpaceChildren reads the space's current state from the homeserver and returns the linked
+// children that are not in keep.
+func (fs *folderSpaceManager) staleSpaceChildren(ctx context.Context, space id.RoomID, keep map[id.RoomID]string) ([]id.RoomID, error) {
+	intent, ok := fs.tc.main.Bridge.Bot.(*matrix.ASIntent)
+	if !ok {
+		return nil, fmt.Errorf("bridge bot is %T, can't read room state", fs.tc.main.Bridge.Bot)
+	}
+	state, err := intent.Matrix.State(ctx, space)
+	if err != nil {
+		return nil, err
+	}
+	var stale []id.RoomID
+	for stateKey, evt := range state[event.StateSpaceChild] {
+		child := id.RoomID(stateKey)
+		if _, ok := keep[child]; ok {
+			continue
+		}
+		if content := evt.Content.AsSpaceChild(); content != nil && len(content.Via) > 0 {
+			stale = append(stale, child)
+		}
+	}
+	return stale, nil
 }
 
 // contactIDs returns the Telegram user IDs in the contact list. On error the list is empty,
