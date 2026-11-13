@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"html"
 	"image"
 	"image/jpeg"
 	_ "image/jpeg"
@@ -123,7 +124,7 @@ func (tc *TelegramClient) HandleMatrixViewingChat(ctx context.Context, msg *brid
 }
 
 func (tc *TelegramClient) pollSponsoredMessage(ctx context.Context, portal *bridgev2.Portal) error {
-	if tc.metadata.IsBot || tc.metadata.AdsDisabled {
+	if tc.metadata.IsBot || tc.adsMode() == AdsModeOff {
 		return nil
 	}
 	meta := portal.Metadata.(*PortalMetadata)
@@ -193,13 +194,25 @@ func (tc *TelegramClient) pollSponsoredMessage(ctx context.Context, portal *brid
 			"recommended":     msg.Recommended,
 		},
 	}
-	formatSponsoredMessage(tc.folderSpaces.language(), &msg, content)
-	intent, err := tc.sponsoredMessageIntent(ctx, portal.MXID)
+	lang := tc.folderSpaces.language()
+	formatSponsoredMessage(lang, &msg, content)
+	targetRoom := portal.MXID
+	inAdsRoom := tc.adsMode() == AdsModeRoom
+	if inAdsRoom {
+		if targetRoom, err = tc.ensureAdsRoom(ctx); err != nil {
+			return err
+		}
+		// Say which channel the ad belongs to.
+		content.Body = fmt.Sprintf("%s «%s»\n%s", adsRoomText(lang, "channel"), portal.Name, content.Body)
+		content.FormattedBody = fmt.Sprintf(`<p>%s «<a href="https://matrix.to/#/%s">%s</a>»</p>%s`,
+			html.EscapeString(adsRoomText(lang, "channel")), portal.MXID, html.EscapeString(portal.Name), content.FormattedBody)
+	}
+	intent, err := tc.sponsoredMessageIntent(ctx, targetRoom)
 	if err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to prepare sponsored message ghost, sending as bridge bot")
 		intent = tc.main.Bridge.Bot
 	}
-	sendResp, err := intent.SendMessage(ctx, portal.MXID, event.EventMessage, &event.Content{
+	sendResp, err := intent.SendMessage(ctx, targetRoom, event.EventMessage, &event.Content{
 		Raw:    extra,
 		Parsed: content,
 	}, &bridgev2.MatrixSendExtra{Timestamp: time.Now()})
@@ -207,8 +220,12 @@ func (tc *TelegramClient) pollSponsoredMessage(ctx context.Context, portal *brid
 		return fmt.Errorf("failed to send sponsored message: %w", err)
 	}
 	oldSponsoredMessageMXID := meta.SponsoredMessageEventID
+	oldSponsoredMessageRoom := meta.SponsoredMessageRoomID
+	if oldSponsoredMessageRoom == "" {
+		oldSponsoredMessageRoom = portal.MXID
+	}
 	if oldSponsoredMessageMXID != "" {
-		_, err = tc.main.Bridge.Bot.SendMessage(ctx, portal.MXID, event.EventRedaction, &event.Content{
+		_, err = tc.main.Bridge.Bot.SendMessage(ctx, oldSponsoredMessageRoom, event.EventRedaction, &event.Content{
 			Parsed: &event.RedactionEventContent{
 				Reason:                "new sponsored message sent",
 				Redacts:               oldSponsoredMessageMXID,
@@ -220,6 +237,11 @@ func (tc *TelegramClient) pollSponsoredMessage(ctx context.Context, portal *brid
 		}
 	}
 	meta.SponsoredMessageEventID = sendResp.EventID
+	meta.SponsoredMessageRoomID = ""
+	if inAdsRoom {
+		meta.SponsoredMessageRoomID = targetRoom
+		tc.trackAdForView(sendResp.EventID, msg.RandomID)
+	}
 	zerolog.Ctx(ctx).Debug().
 		Stringer("event_id", sendResp.EventID).
 		Str("random_id", base64.StdEncoding.EncodeToString(msg.RandomID)).
@@ -1195,6 +1217,7 @@ func (tc *TelegramClient) HandleMatrixReadReceipt(ctx context.Context, msg *brid
 			meta := msg.Portal.Metadata.(*PortalMetadata)
 			randomID := meta.SponsoredMessageRandomID
 			if !tc.metadata.IsBot &&
+				tc.adsMode() == AdsModeOn &&
 				randomID != nil &&
 				time.Since(meta.SponsoredMessagePollTS.Time) < 15*time.Minute &&
 				(meta.SponsoredMessageEventID == msg.EventID || msg.Receipt.Timestamp.After(meta.SponsoredMessagePollTS.Time)) &&

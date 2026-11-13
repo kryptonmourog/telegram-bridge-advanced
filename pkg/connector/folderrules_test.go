@@ -289,3 +289,12 @@ func TestUnsupportedMessagePart(t *testing.T) {
 	en := unsupportedMessagePart(&tg.Message{ID: 3, PeerID: &tg.PeerChannel{ChannelID: 5}}, "en")
 	assert.Contains(t, en.Content.Body, "Open it in Telegram: https://t.me/c/5/3")
 }
+
+func TestAdsMode(t *testing.T) {
+	tc := &TelegramClient{metadata: &UserLoginMetadata{}}
+	assert.Equal(t, AdsModeRoom, tc.adsMode(), "the ads room is the default")
+	tc.metadata.AdsDisabled = true
+	assert.Equal(t, AdsModeOff, tc.adsMode(), "the old off switch still works")
+	tc.metadata.AdsMode = AdsModeOn
+	assert.Equal(t, AdsModeOn, tc.adsMode())
+}

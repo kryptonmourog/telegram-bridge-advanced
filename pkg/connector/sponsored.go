@@ -132,9 +132,10 @@ func (tc *TelegramClient) sponsoredMessageIntent(ctx context.Context, room id.Ro
 	return ghost.Intent, nil
 }
 
-// removeSponsoredMessages redacts the sponsored message shown in each channel room of the login and
-// forgets it, so that nothing is redacted again later. Returns how many were removed.
-func (tc *TelegramClient) removeSponsoredMessages(ctx context.Context) (int, error) {
+// removeSponsoredMessages redacts the sponsored message shown for each channel of the login and
+// forgets it, so that nothing is redacted again later. With onlyInChannels, ads in the ads room are
+// kept. Returns how many were removed.
+func (tc *TelegramClient) removeSponsoredMessages(ctx context.Context, onlyInChannels bool) (int, error) {
 	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
 	if err != nil {
 		return 0, err
@@ -146,11 +147,16 @@ func (tc *TelegramClient) removeSponsoredMessages(ctx context.Context) (int, err
 			continue
 		}
 		meta, ok := portal.Metadata.(*PortalMetadata)
-		if !ok || meta.SponsoredMessageEventID == "" {
+		if !ok || meta.SponsoredMessageEventID == "" || (onlyInChannels && meta.SponsoredMessageRoomID != "") {
 			continue
 		}
-		tc.redactAsBot(ctx, portal.MXID, meta.SponsoredMessageEventID, "sponsored messages turned off")
+		room := meta.SponsoredMessageRoomID
+		if room == "" {
+			room = portal.MXID
+		}
+		tc.redactAsBot(ctx, room, meta.SponsoredMessageEventID, "sponsored messages moved or turned off")
 		meta.SponsoredMessageEventID = ""
+		meta.SponsoredMessageRoomID = ""
 		meta.SponsoredMessageRandomID = nil
 		if err = portal.Save(ctx); err != nil {
 			return removed, err

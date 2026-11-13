@@ -149,6 +149,8 @@ type TelegramClient struct {
 	chunkedBackfill chunkedBackfill
 	// comments mirrors comments of channel posts into channel rooms, see comments.go.
 	comments commentManager
+	// adsRoom tracks ads sent to the ads room, see adsroom.go.
+	adsRoom adsRoomState
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)
@@ -568,6 +570,14 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 		}
 		tc.folderSpaces.foldersChangedAfter(folderSpacesAfterConnectDelay)
 		go tc.resumeChunkedBackfills(ctx)
+		if tc.adsMode() != AdsModeOn {
+			// Ads still in channel rooms from before "room" became the default.
+			go func() {
+				if _, err := tc.removeSponsoredMessages(ctx, true); err != nil {
+					zerolog.Ctx(ctx).Err(err).Msg("Failed to remove ads from channel rooms")
+				}
+			}()
+		}
 		go func() {
 			// After the startup sync has had time to run.
 			select {

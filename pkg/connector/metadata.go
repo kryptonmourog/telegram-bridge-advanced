@@ -71,8 +71,10 @@ type PortalMetadata struct {
 	FullSynced        bool          `json:"full_synced,omitempty"`
 	ParticipantsCount int           `json:"member_count,omitempty"`
 
-	SponsoredMessagePollTS    jsontime.Unix       `json:"sponsored_message_poll_ts,omitempty"`
-	SponsoredMessageEventID   id.EventID          `json:"sponsored_message_event_id,omitempty"`
+	SponsoredMessagePollTS  jsontime.Unix `json:"sponsored_message_poll_ts,omitempty"`
+	SponsoredMessageEventID id.EventID    `json:"sponsored_message_event_id,omitempty"`
+	// SponsoredMessageRoomID is where the last ad was sent; empty means the channel room.
+	SponsoredMessageRoomID    id.RoomID           `json:"sponsored_message_room_id,omitempty"`
 	SponsoredMessageRandomID  []byte              `json:"sponsored_message_random_id,omitempty"`
 	LastMessageOnSponsorFetch networkid.MessageID `json:"last_message_on_sponsor_fetch,omitempty"`
 
@@ -117,10 +119,14 @@ type UserLoginMetadata struct {
 	LoginPhone  string `json:"phone,omitempty"`
 	LoginMethod string `json:"login_method,omitempty"`
 	IsBot       bool   `json:"is_bot,omitempty"`
-	// AdsDisabled is set with `ads off`: Telegram's sponsored messages aren't bridged.
-	AdsDisabled bool             `json:"ads_disabled,omitempty"`
-	Session     UserLoginSession `json:"session"`
-	TakeoutID   int64            `json:"takeout_id,omitempty"`
+	// AdsDisabled is the old form of AdsMode "off".
+	AdsDisabled bool `json:"ads_disabled,omitempty"`
+	// AdsMode is how sponsored messages are shown, see adsroom.go. Empty means "room".
+	AdsMode string `json:"ads_mode,omitempty"`
+	// AdsRoom is the room sponsored messages go to in "room" mode.
+	AdsRoom   id.RoomID        `json:"ads_room,omitempty"`
+	Session   UserLoginSession `json:"session"`
+	TakeoutID int64            `json:"takeout_id,omitempty"`
 
 	DialogSyncComplete   bool               `json:"takeout_portal_crawl_done,omitempty"`
 	DialogSyncCursor     networkid.PortalID `json:"takeout_portal_crawl_cursor,omitempty"`

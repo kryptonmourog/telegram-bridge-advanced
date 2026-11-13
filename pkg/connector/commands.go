@@ -70,8 +70,8 @@ var cmdAds = &commands.FullHandler{
 	Name: "ads",
 	Help: commands.HelpMeta{
 		Section:     commands.HelpSectionChats,
-		Description: "Show whether Telegram's sponsored messages in channels are bridged, or turn them on or off",
-		Args:        "[`on` | `off`]",
+		Description: "Show or change how Telegram's sponsored messages are shown: in a separate room, in channels or not at all",
+		Args:        "[`room` | `on` | `off`]",
 	},
 	RequiresLogin: true,
 }
@@ -87,31 +87,36 @@ func fnAds(ce *commands.Event) {
 	if len(ce.Args) > 0 {
 		sub = strings.ToLower(ce.Args[0])
 	}
+	describe := map[string]string{
+		AdsModeRoom: "`room`: Telegram's ads go to a separate muted, low priority room instead of the channels",
+		AdsModeOn:   "`on`: Telegram's ads are shown in the channel rooms",
+		AdsModeOff:  "`off`: ads aren't requested at all (Telegram's API terms ask apps to show them)",
+	}
 	switch sub {
 	case "":
-		if client.metadata.AdsDisabled {
-			ce.Reply("Sponsored messages are off. Use `ads on` to show them again.")
-		} else {
-			ce.Reply("Sponsored messages are on: Telegram's ads are shown in channel rooms. Use `ads off` to hide them.")
-		}
-	case "on", "off":
-		client.metadata.AdsDisabled = sub == "off"
+		ce.Reply("Sponsored messages: %s.\nModes: `ads room` (default), `ads on`, `ads off`.", describe[client.adsMode()])
+	case AdsModeRoom, AdsModeOn, AdsModeOff:
+		client.metadata.AdsMode = sub
+		client.metadata.AdsDisabled = false
 		if err := login.Save(ce.Ctx); err != nil {
 			ce.Reply("Failed to save the setting: %v", err)
 			return
 		}
-		if sub == "on" {
-			ce.Reply("Sponsored messages are on again, they'll appear in channels as Telegram serves them.")
-			return
+		// Ads already shown where they no longer belong are removed.
+		removed, err := 0, error(nil)
+		switch sub {
+		case AdsModeRoom:
+			removed, err = client.removeSponsoredMessages(ce.Ctx, true)
+		case AdsModeOff:
+			removed, err = client.removeSponsoredMessages(ce.Ctx, false)
 		}
-		removed, err := client.removeSponsoredMessages(ce.Ctx)
 		if err != nil {
-			ce.Reply("Sponsored messages are off, but removing the shown ones failed after %d: %v", removed, err)
+			ce.Reply("Saved, but removing shown ads failed after %d: %v", removed, err)
 			return
 		}
-		ce.Reply("Sponsored messages are off. Removed %d shown ads. Note that Telegram's API terms ask apps to show them.", removed)
+		ce.Reply("Sponsored messages: %s. Removed %d shown ads.", describe[sub], removed)
 	default:
-		ce.Reply("Usage: `ads` (status), `ads on`, `ads off`")
+		ce.Reply("Usage: `ads` (status), `ads room`, `ads on`, `ads off`")
 	}
 }
 

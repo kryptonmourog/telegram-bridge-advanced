@@ -55,6 +55,7 @@ func (tc *TelegramConnector) Start(ctx context.Context) error {
 	if err := tc.Store.Upgrade(ctx); err != nil {
 		return err
 	}
+	tc.registerAdsRoomReceipts()
 	return tc.createCommentTables(ctx)
 }
 
