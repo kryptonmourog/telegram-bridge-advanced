@@ -475,8 +475,10 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		}
 		// Forum topics live in the forum's own space; the forum is placed instead. Channels of a
 		// Telegram community also have a parent, but are placed like any other chat.
-		if _, _, parentTopic, err := ids.ParsePortalID(portal.ParentKey.ID); portal.ParentKey.ID != "" && err == nil && parentTopic == ids.TopicIDSpaceRoom {
-			continue
+		if portal.ParentKey.ID != "" {
+			if _, _, parentTopic, err := ids.ParsePortalID(portal.ParentKey.ID); err == nil && parentTopic == ids.TopicIDSpaceRoom {
+				continue
+			}
 		}
 		chat, ok := fs.folderChatForPortal(ctx, portal, contactIDs)
 		if !ok {
