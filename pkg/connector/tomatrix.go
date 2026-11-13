@@ -330,6 +330,21 @@ func (tc *TelegramClient) convertToMatrix(
 	return
 }
 
+// mediaRetryDelays are the waits between attempts to transfer media, so that a short outage of the
+// homeserver or Telegram doesn't turn the media into a failure notice for good.
+var mediaRetryDelays = []time.Duration{15 * time.Second, time.Minute, 5 * time.Minute}
+
+// isRetryableMediaError reports whether transferring media may succeed if tried again later.
+func isRetryableMediaError(err error) bool {
+	switch {
+	case errors.Is(err, bridgev2.ErrMediaTooLarge),
+		errors.Is(err, context.Canceled),
+		tgerr.Is(err, tg.ErrFileReferenceExpired):
+		return false
+	}
+	return true
+}
+
 var mediaFailureStrings = map[string]map[string]string{
 	"en": {
 		"too_large": "📎 File “%s” (%s) wasn't bridged: it's larger than this Matrix server accepts (%s). " +
@@ -1000,7 +1015,32 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		}
 	}
 	if content.URL == "" {
-		content.URL, content.File, content.Info, err = mediaTransferer.Transfer(ctx, tc.main.Store, intent)
+		var expectedSize int64
+		if content.Info != nil {
+			expectedSize = int64(content.Info.Size)
+		}
+		var info *event.FileInfo
+		for attempt := 0; ; attempt++ {
+			content.URL, content.File, info, err = mediaTransferer.Transfer(ctx, tc.main.Store, intent)
+			if err == nil || !isRetryableMediaError(err) || attempt >= len(mediaRetryDelays) {
+				break
+			}
+			log.Warn().Err(err).
+				Int("attempt", attempt+1).
+				Stringer("retry_in", mediaRetryDelays[attempt]).
+				Msg("Failed to transfer media, retrying")
+			select {
+			case <-ctx.Done():
+			case <-time.After(mediaRetryDelays[attempt]):
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		if info != nil {
+			content.Info = info
+			expectedSize = int64(info.Size)
+		}
 		if err != nil {
 			if tgerr.Is(err, tg.ErrFileReferenceExpired) && allowRefetch {
 				log.Warn().Err(err).Msg("Failed to transfer media, trying to refetch from message")
@@ -1015,7 +1055,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 			} else {
 				log.Err(err).Msg("Failed to transfer media")
 			}
-			converted = mediaFailurePart(msg, err, content.GetFileName(), int64(content.Info.Size), tc.main.maxFileSize, tc.folderSpaces.language())
+			converted = mediaFailurePart(msg, err, content.GetFileName(), expectedSize, tc.main.maxFileSize, tc.folderSpaces.language())
 			return
 		}
 	}

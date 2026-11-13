@@ -17,6 +17,7 @@
 package connector
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -259,4 +260,11 @@ func TestMediaFailurePart_NoSpace(t *testing.T) {
 	msg := &tg.Message{ID: 7, PeerID: &tg.PeerChannel{ChannelID: 5}}
 	part := mediaFailurePart(msg, fmt.Errorf("x: %w", media.ErrNotEnoughDiskSpace), "big.mp4", 3*1024*1024*1024, 4096*1024*1024, "ru")
 	assert.Contains(t, part.Content.Body, "Файл «big.mp4» (3.0 GB) не перенесён: на сервере моста не хватает места на диске")
+}
+
+func TestIsRetryableMediaError(t *testing.T) {
+	assert.True(t, isRetryableMediaError(fmt.Errorf("failed to upload media to Matrix: HTTP 502")))
+	assert.True(t, isRetryableMediaError(fmt.Errorf("x: %w", media.ErrNotEnoughDiskSpace)), "space may free up")
+	assert.False(t, isRetryableMediaError(fmt.Errorf("x: %w", bridgev2.ErrMediaTooLarge)))
+	assert.False(t, isRetryableMediaError(fmt.Errorf("x: %w", context.Canceled)))
 }
