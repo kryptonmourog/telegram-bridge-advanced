@@ -46,6 +46,13 @@ var commentSchema = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS fork_comment_mirror_event_idx ON fork_comment_mirror (event_id)`,
 	`CREATE INDEX IF NOT EXISTS fork_comment_mirror_thread_idx ON fork_comment_mirror (group_id, copy_id)`,
+	// Last edit of each mirrored comment that's in Matrix, to notice edits found by polling.
+	`CREATE TABLE IF NOT EXISTS fork_comment_edit (
+		group_id  BIGINT NOT NULL,
+		msg_id    BIGINT NOT NULL,
+		edit_date BIGINT NOT NULL,
+		PRIMARY KEY (group_id, msg_id)
+	)`,
 }
 
 func (tc *TelegramConnector) createCommentTables(ctx context.Context) error {
@@ -144,4 +151,23 @@ func (tc *TelegramClient) lastMirroredComment(ctx context.Context, groupID int64
 	err := tc.main.Store.QueryRow(ctx,
 		`SELECT MAX(msg_id) FROM fork_comment_mirror WHERE group_id=$1 AND copy_id=$2`, groupID, copyID).Scan(&maxID)
 	return int(maxID.Int64), err
+}
+
+func (tc *TelegramClient) getCommentEditDate(ctx context.Context, groupID int64, msgID int) (int, error) {
+	var date sql.NullInt64
+	err := tc.main.Store.QueryRow(ctx, `SELECT edit_date FROM fork_comment_edit WHERE group_id=$1 AND msg_id=$2`, groupID, msgID).Scan(&date)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return int(date.Int64), err
+}
+
+func (tc *TelegramClient) saveCommentEditDate(ctx context.Context, groupID int64, msgID, editDate int) error {
+	if editDate == 0 {
+		return nil
+	}
+	_, err := tc.main.Store.Exec(ctx, `
+		INSERT INTO fork_comment_edit (group_id, msg_id, edit_date) VALUES ($1, $2, $3)
+		ON CONFLICT (group_id, msg_id) DO UPDATE SET edit_date=excluded.edit_date`, groupID, msgID, editDate)
+	return err
 }

@@ -445,6 +445,12 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 	if firstEvent == "" {
 		return nil
 	}
+	if editDate, ok := msg.GetEditDate(); ok {
+		// Mirrored with this edit already applied.
+		if err = tc.saveCommentEditDate(ctx, groupID, msg.ID, editDate); err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment edit date")
+		}
+	}
 	return tc.saveCommentMirror(ctx, commentMirror{GroupID: groupID, MsgID: msg.ID, CopyID: rootID, RoomID: portal.MXID, EventID: firstEvent})
 }
 
@@ -458,6 +464,15 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 	if err != nil || mirror == nil {
 		return
 	}
+	// Skip edits already applied (polling sees the same edit again).
+	if applied, err := tc.getCommentEditDate(ctx, group.ChannelID, msg.ID); err == nil && msg.EditDate != 0 && msg.EditDate <= applied {
+		return
+	}
+	defer func() {
+		if err := tc.saveCommentEditDate(ctx, group.ChannelID, msg.ID, msg.EditDate); err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment edit date")
+		}
+	}()
 	portal, err := tc.main.Bridge.GetPortalByMXID(ctx, mirror.RoomID)
 	if err != nil || portal == nil {
 		return
@@ -558,6 +573,11 @@ func (tc *TelegramClient) fetchPostComments(ctx context.Context, channelID int64
 	}
 	// Returned newest first.
 	slices.Reverse(comments)
+	if minID > 0 {
+		// Groups without live updates (not bridged, too big) only reach the bridge through polling,
+		// so also look at the latest comments for edits of ones already in Matrix.
+		tc.pollCommentEdits(ctx, peer, postID)
+	}
 	var failed error
 	for _, msg := range comments {
 		if err = tc.mirrorComment(ctx, thread.GroupID, msg); err != nil {
@@ -569,6 +589,30 @@ func (tc *TelegramClient) fetchPostComments(ctx context.Context, channelID int64
 		zerolog.Ctx(ctx).Debug().Int64("channel_id", channelID).Int("post_id", postID).Int("count", len(comments)).Msg("Mirrored comments of post")
 	}
 	return failed
+}
+
+// pollCommentEdits applies edits of the latest comments of a post that are already in Matrix.
+func (tc *TelegramClient) pollCommentEdits(ctx context.Context, peer *tg.InputPeerChannel, postID int) {
+	resp, err := APICallWithUpdates(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
+		res, err := tc.client.API().MessagesGetReplies(ctx, &tg.MessagesGetRepliesRequest{Peer: peer, MsgID: postID, Limit: 100})
+		if err != nil {
+			return nil, err
+		}
+		modified, ok := res.AsModified()
+		if !ok {
+			return nil, fmt.Errorf("unexpected response type %T", res)
+		}
+		return modified, nil
+	})
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Int("post_id", postID).Msg("Failed to check comments for edits")
+		return
+	}
+	for _, m := range resp.GetMessages() {
+		if msg, ok := m.(*tg.Message); ok && msg.EditDate != 0 {
+			tc.mirrorCommentEdit(ctx, msg)
+		}
+	}
 }
 
 // postIDsWithComments returns the posts among the messages that have comments.
