@@ -319,7 +319,7 @@ func (tc *TelegramClient) convertToMatrix(
 		}
 	}
 	if poll, ok := msg.Media.(*tg.MessageMediaPoll); ok {
-		cm.Parts = append(cm.Parts, tc.pollResultsPart(poll))
+		cm.Parts = append(cm.Parts, tc.pollResultsPart(portal, msg, poll))
 	}
 
 	if ttl, ok := msg.GetTTLPeriod(); ok && disappearingSetting == nil {

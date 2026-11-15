@@ -682,7 +682,10 @@ var ruTranslations = map[string]string{
 	" (votes: %d)":                        " (голосов: %d)",
 	", final":                             ", окончательные",
 	" ← your vote":                        " ← ваш голос",
-	"Telegram shows the results after you vote.": "Telegram покажет итоги после вашего голоса.",
-	"a poll needs at least two answers":          "в опросе нужно минимум два варианта",
-	"You cannot change your vote":                "Переголосовать нельзя",
+	"Telegram shows the results after you vote.":        "Telegram покажет итоги после вашего голоса.",
+	"a poll needs at least two answers":                 "в опросе нужно минимум два варианта",
+	"You cannot change your vote":                       "Переголосовать нельзя",
+	"The poll was closed and can no longer be voted on": "Опрос закрыт, голосовать больше нельзя",
+	"Your vote was not bridged":                         "Ваш голос не доставлен в Telegram",
+	"Your vote may not have been bridged":               "Ваш голос, возможно, не доставлен в Telegram",
 }

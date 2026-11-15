@@ -210,6 +210,22 @@ func (tc *TelegramClient) getPollByMessage(ctx context.Context, portalKey networ
 type pollState struct {
 	lock    sync.Mutex
 	pending map[pollMessageKey]*pendingPollResults
+	// shown is the text of each results notice, to skip edits that change nothing.
+	shown map[pollMessageKey]string
+}
+
+// setShownResults remembers the results text of a poll message and reports whether it changed.
+func (ps *pollState) setShownResults(key pollMessageKey, text string) bool {
+	ps.lock.Lock()
+	defer ps.lock.Unlock()
+	if ps.shown == nil {
+		ps.shown = map[pollMessageKey]string{}
+	}
+	if ps.shown[key] == text {
+		return false
+	}
+	ps.shown[key] = text
+	return true
 }
 
 type pollMessageKey struct {
@@ -272,11 +288,13 @@ func (tc *TelegramClient) convertPollToMatrix(ctx context.Context, portal *bridg
 	return start
 }
 
-func (tc *TelegramClient) pollResultsPart(media *tg.MessageMediaPoll) *bridgev2.ConvertedMessagePart {
+func (tc *TelegramClient) pollResultsPart(portal *bridgev2.Portal, msg *tg.Message, media *tg.MessageMediaPoll) *bridgev2.ConvertedMessagePart {
+	content := tc.pollResultsContent(storePoll(&media.Poll), &media.Results, "")
+	tc.polls.setShownResults(pollMessageKey{portal: portal.PortalKey, msgID: msg.ID}, content.Body)
 	return &bridgev2.ConvertedMessagePart{
 		ID:         pollResultsPartID,
 		Type:       event.EventMessage,
-		Content:    tc.pollResultsContent(storePoll(&media.Poll), &media.Results, ""),
+		Content:    content,
 		DBMetadata: &MessageMetadata{},
 	}
 }
@@ -430,6 +448,9 @@ func (tc *TelegramClient) editPollResults(ctx context.Context, key pollMessageKe
 		return
 	}
 	content := tc.pollResultsContent(row.Poll, &results, row.OwnVote)
+	if !tc.polls.setShownResults(key, content.Body) {
+		return
+	}
 	sender := bridgev2.EventSender{Sender: part.SenderID}
 	if part.SenderID == tc.userID {
 		sender.IsFromMe = true
@@ -568,7 +589,18 @@ func (tc *TelegramClient) HandleMatrixPollVote(ctx context.Context, msg *bridgev
 			previous = strings.Split(row.OwnVote, ",")
 		}
 		go tc.sendOwnPollVote(context.WithoutCancel(ctx), row, previous)
-		return nil, tc.humaniseSendError(err)
+		if status, ok := tc.humaniseSendError(err).(bridgev2.MessageStatus); ok {
+			return nil, status.WithIsCertain(true).WithSendNotice(true)
+		}
+		return nil, err
+	}
+	// The same poll in other messages (a channel post and its discussion copy) gets the vote too.
+	if others, err := tc.getPollMessages(ctx, row.PollID); err == nil {
+		for _, other := range others {
+			if other.PortalKey != row.PortalKey || other.MsgID != row.MsgID {
+				go tc.sendOwnPollVote(context.WithoutCancel(ctx), other, chosen)
+			}
+		}
 	}
 	tc.handlePollUpdates(ctx, updates)
 	return resp, nil
@@ -689,6 +721,7 @@ func (tc *TelegramClient) sendOwnPollResults(ctx context.Context, portal *bridge
 		return
 	}
 	content := tc.pollResultsContent(row.Poll, results, row.OwnVote)
+	tc.polls.setShownResults(pollMessageKey{portal: row.PortalKey, msgID: row.MsgID}, content.Body)
 	content.RelatesTo = (&event.RelatesTo{}).SetReplyTo(start.MXID)
 	resp, err := dp.SendMessage(ctx, portal.MXID, event.EventMessage, &event.Content{Parsed: content}, &bridgev2.MatrixSendExtra{Timestamp: time.Now()})
 	if err != nil {
