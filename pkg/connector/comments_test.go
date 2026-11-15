@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
 )
@@ -51,4 +52,22 @@ func TestSentMessageID(t *testing.T) {
 	assert.Equal(t, 42, sentMessageID(&tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateMessageID{ID: 42}}}))
 	assert.Equal(t, 7, sentMessageID(&tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateNewChannelMessage{Message: &tg.Message{ID: 7}}}}))
 	assert.Equal(t, 0, sentMessageID(&tg.UpdatesTooLong{}))
+}
+
+func TestCommentAuthorAddTo(t *testing.T) {
+	a := &commentAuthor{Name: "Кирилл <K>", MXID: "@telegram_1:example.com"}
+	text := &event.MessageEventContent{MsgType: event.MsgText, Body: "привет"}
+	a.addTo(text)
+	assert.Equal(t, "Кирилл <K>: привет", text.Body)
+	assert.Equal(t, `<strong><a href="https://matrix.to/#/@telegram_1:example.com">Кирилл &lt;K&gt;</a>:</strong> привет`, text.FormattedBody)
+
+	photo := &event.MessageEventContent{MsgType: event.MsgImage, Body: "image.jpg"}
+	a.addTo(photo)
+	assert.Equal(t, "image.jpg", photo.FileName, "the file name is kept")
+	assert.Equal(t, "Кирилл <K>", photo.Body, "the author becomes the caption")
+
+	var own *commentAuthor
+	mine := &event.MessageEventContent{MsgType: event.MsgText, Body: "моё"}
+	own.addTo(mine)
+	assert.Equal(t, "моё", mine.Body, "the user's own comments aren't signed")
 }

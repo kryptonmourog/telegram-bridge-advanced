@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"html"
 	"slices"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/matrix"
+	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
@@ -279,6 +281,95 @@ func (tc *TelegramClient) ensureCommentsAllowed(ctx context.Context, room id.Roo
 	return nil
 }
 
+// Comments of other people are sent by one "Comments" account with the author's name as a link to
+// their ghost's profile, instead of by each author's ghost: those would all join the channel room,
+// thousands in big channels, filling the timeline and member list and the room state. From the profile
+// the user can still start a private chat with the author. The user's own comments come from them.
+
+const commenterGhostID networkid.UserID = "commenter"
+
+var commenterNames = map[string]string{"en": "Comments", "ru": "Комментарии"}
+
+// commentAuthor is who wrote a comment sent by the commenter account; nil for the user's own.
+type commentAuthor struct {
+	Name string
+	MXID id.UserID
+}
+
+// addTo puts "Author: " before the comment, linking the name to the author's profile.
+func (a *commentAuthor) addTo(content *event.MessageEventContent) {
+	if a == nil {
+		return
+	}
+	if content.MsgType.IsMedia() && content.FileName == "" {
+		// The body becomes the caption, keep the file name in its own field.
+		content.FileName = content.Body
+		content.Body = ""
+		content.FormattedBody = ""
+		content.Format = ""
+	}
+	content.EnsureHasHTML()
+	link := fmt.Sprintf(`<a href="https://matrix.to/#/%s">%s</a>`, a.MXID, html.EscapeString(a.Name))
+	if content.Body == "" {
+		content.Body = a.Name
+		content.FormattedBody = "<strong>" + link + "</strong>"
+	} else {
+		content.Body = a.Name + ": " + content.Body
+		content.FormattedBody = "<strong>" + link + ":</strong> " + content.FormattedBody
+	}
+	content.Format = event.FormatHTML
+}
+
+// commentSender returns who sends a comment into the channel room: the user's double puppet for
+// their own comments, the commenter account with the author otherwise. The author's ghost is
+// registered (so that its profile opens) but doesn't join the room.
+func (tc *TelegramClient) commentSender(ctx context.Context, portal *bridgev2.Portal, sender bridgev2.EventSender) (bridgev2.MatrixAPI, *commentAuthor, error) {
+	if sender.IsFromMe {
+		intent, ok := portal.GetIntentFor(ctx, sender, tc.userLogin, bridgev2.RemoteEventMessage)
+		if !ok {
+			return nil, nil, nil
+		}
+		return intent, nil, intent.EnsureJoined(ctx, portal.MXID)
+	}
+	author := &commentAuthor{}
+	if authorIntent, ok := portal.GetIntentFor(ctx, sender, tc.userLogin, bridgev2.RemoteEventMessage); ok {
+		author.MXID = authorIntent.GetMXID()
+	}
+	if ghost, err := tc.main.Bridge.GetGhostByID(ctx, sender.Sender); err == nil && ghost != nil {
+		author.Name = ghost.Name
+	}
+	if author.Name == "" {
+		author.Name = string(sender.Sender)
+	}
+	commenter, err := tc.main.Bridge.GetGhostByID(ctx, commenterGhostID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get commenter account: %w", err)
+	}
+	name, ok := commenterNames[tc.folderSpaces.language()]
+	if !ok {
+		name = commenterNames["en"]
+	}
+	commenter.UpdateName(ctx, name)
+	if err = commenter.Intent.EnsureJoined(ctx, portal.MXID); err != nil {
+		return nil, nil, fmt.Errorf("failed to join commenter account to channel room: %w", err)
+	}
+	return commenter.Intent, author, nil
+}
+
+// mirrorSentByCommenter reports whether a mirrored comment was sent by the commenter account.
+func (tc *TelegramClient) mirrorSentByCommenter(ctx context.Context, mirror *commentMirror) bool {
+	bot, ok := tc.main.Bridge.Bot.(*matrix.ASIntent)
+	if !ok {
+		return true
+	}
+	evt, err := bot.Matrix.GetEvent(ctx, mirror.RoomID, mirror.EventID)
+	if err != nil {
+		return true
+	}
+	commenter, err := tc.main.Bridge.GetGhostByID(ctx, commenterGhostID)
+	return err == nil && commenter != nil && evt.Sender == commenter.Intent.GetMXID()
+}
+
 // mirrorComment sends a comment to the channel room as a thread message under its post.
 func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg *tg.Message) error {
 	rootID := commentRootID(msg)
@@ -311,12 +402,9 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 		return err
 	}
 	sender := tc.getEventSender(msg, false)
-	intent, ok := portal.GetIntentFor(ctx, sender, tc.userLogin, bridgev2.RemoteEventMessage)
-	if !ok {
-		return nil
-	}
-	if err = intent.EnsureJoined(ctx, portal.MXID); err != nil {
-		return fmt.Errorf("failed to join commenter to channel room: %w", err)
+	intent, author, err := tc.commentSender(ctx, portal, sender)
+	if err != nil || intent == nil {
+		return err
 	}
 	converted, err := tc.convertToMatrix(ctx, portal, intent, msg)
 	if err != nil {
@@ -336,6 +424,9 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 		// The ghost sends the comment itself, the channel's "Name: " signature isn't needed.
 		content.RemovePerMessageProfileFallback()
 		content.BeeperPerMessageProfile = nil
+		if i == 0 {
+			author.addTo(content)
+		}
 		content.RelatesTo = &event.RelatesTo{
 			Type:          event.RelThread,
 			EventID:       post.MXID,
@@ -371,9 +462,20 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 	if err != nil || portal == nil {
 		return
 	}
-	intent, ok := portal.GetIntentFor(ctx, tc.getEventSender(msg, false), tc.userLogin, bridgev2.RemoteEventEdit)
-	if !ok {
-		return
+	// The edit has to come from whoever sent the comment: the author's ghost for comments mirrored
+	// before the commenter account was used, the commenter account otherwise.
+	sender := tc.getEventSender(msg, false)
+	var intent bridgev2.MatrixAPI
+	var author *commentAuthor
+	if tc.mirrorSentByCommenter(ctx, mirror) {
+		if intent, author, err = tc.commentSender(ctx, portal, sender); err != nil || intent == nil {
+			return
+		}
+	} else {
+		var ok bool
+		if intent, ok = portal.GetIntentFor(ctx, sender, tc.userLogin, bridgev2.RemoteEventEdit); !ok {
+			return
+		}
 	}
 	converted, err := tc.convertToMatrix(ctx, portal, intent, msg)
 	if err != nil || len(converted.Parts) == 0 {
@@ -382,6 +484,7 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 	content := converted.Parts[0].Content
 	content.RemovePerMessageProfileFallback()
 	content.BeeperPerMessageProfile = nil
+	author.addTo(content)
 	content.SetEdit(mirror.EventID)
 	if _, err = intent.SendMessage(ctx, portal.MXID, event.EventMessage, &event.Content{Parsed: content},
 		&bridgev2.MatrixSendExtra{Timestamp: time.Unix(int64(msg.EditDate), 0)}); err != nil {
