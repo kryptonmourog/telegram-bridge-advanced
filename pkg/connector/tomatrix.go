@@ -103,6 +103,9 @@ func (tc *TelegramClient) mediaToMatrix(
 	case tg.MessageMediaUnsupportedTypeID:
 		return unsupportedMessagePart(msg, tc.folderSpaces.language()), nil, nil
 	case tg.MessageMediaPhotoTypeID, tg.MessageMediaDocumentTypeID:
+		if media.TypeID() == tg.MessageMediaPhotoTypeID && skipMediaByRoomSettings(portal, 0) {
+			return roomSkippedPhotoPart(msg, tc.folderSpaces.language()), nil, mediaHashID(ctx, media)
+		}
 		converted, disappearingSetting := tc.convertMediaRequiringUpload(ctx, portal, intent, msg, media, true)
 		return converted, disappearingSetting, mediaHashID(ctx, media)
 	case tg.MessageMediaContactTypeID:
@@ -156,7 +159,7 @@ func (tc *TelegramClient) convertToMatrix(
 	var perMessageProfile *event.BeeperPerMessageProfile
 	if peerType, _, _, err := ids.ParsePortalID(portal.ID); err != nil {
 		return nil, fmt.Errorf("failed to parse portal ID: %w", err)
-	} else if (peerType == ids.PeerTypeChannel && !portal.Metadata.(*PortalMetadata).IsSuperGroup) || hasGuestchatViaFrom(msg) {
+	} else if ((peerType == ids.PeerTypeChannel && !portal.Metadata.(*PortalMetadata).IsSuperGroup) || hasGuestchatViaFrom(msg)) && !portalSettings(portal).NoSignatures {
 		var sender *networkid.UserID
 		if msg.Out {
 			sender = &tc.userID
@@ -256,7 +259,11 @@ func (tc *TelegramClient) convertToMatrix(
 		cm.Parts[0].Content.BeeperPerMessageProfile = perMessageProfile
 		cm.Parts[0].Content.AddPerMessageProfileFallback()
 	}
-	buttons, buttonsHash := tc.addButtons(ctx, msg, cm.Parts[0])
+	var buttons *MessageButtons
+	var buttonsHash []byte
+	if !portalSettings(portal).NoButtons {
+		buttons, buttonsHash = tc.addButtons(ctx, msg, cm.Parts[0])
+	}
 	hasher.Write(buttonsHash)
 	cm.Parts[0].DBMetadata = &MessageMetadata{
 		ContentHash: hasher.Sum(nil),
@@ -351,8 +358,11 @@ var mediaFailureStrings = map[string]map[string]string{
 	"en": {
 		"too_large": "📎 File “%s” (%s) wasn't bridged: it's larger than this Matrix server accepts (%s). " +
 			"For the server admin: the limit is max_upload_size in Synapse.",
-		"failed":  "⚠️ Media wasn't bridged from Telegram: %s.",
-		"skipped": "📎 File “%s” (%s) isn't bridged by the bridge admin's choice.",
+		"failed":     "⚠️ Media wasn't bridged from Telegram: %s.",
+		"skipped":    "📎 File “%s” (%s) isn't bridged by the bridge admin's choice.",
+		"by_admin":   "by the bridge admin's choice",
+		"by_room":    "because of this room's settings",
+		"photo_room": "🖼 Photos aren't bridged because of this room's settings.",
 		"unsupported": "🧩 This is a new kind of Telegram message that the bridge can't show yet " +
 			"(for example, an interactive bot widget). Open it in the Telegram app.",
 		"no_space": "📎 File “%s” (%s) wasn't bridged: the bridge server is out of disk space for it. " +
@@ -364,8 +374,11 @@ var mediaFailureStrings = map[string]map[string]string{
 	"ru": {
 		"too_large": "📎 Файл «%s» (%s) не перенесён: он больше, чем принимает этот сервер Matrix (%s). " +
 			"Администратору: лимит задаётся параметром max_upload_size в Synapse.",
-		"failed":  "⚠️ Медиа не перенесено из Telegram: %s.",
-		"skipped": "📎 Файл «%s» (%s) не переносится по решению администратора моста.",
+		"failed":     "⚠️ Медиа не перенесено из Telegram: %s.",
+		"skipped":    "📎 Файл «%s» (%s) не переносится по решению администратора моста.",
+		"by_admin":   "по решению администратора моста",
+		"by_room":    "по настройкам этой комнаты",
+		"photo_room": "🖼 Фото не переносится по настройкам этой комнаты.",
 		"unsupported": "🧩 Это сообщение нового типа, которое мост пока не умеет показывать " +
 			"(например, интерактивный виджет бота). Откройте его в приложении Telegram.",
 		"no_space": "📎 Файл «%s» (%s) не перенесён: на сервере моста не хватает места на диске. " +
@@ -442,6 +455,27 @@ func skippedMediaPart(msg *tg.Message, document *tg.Document, lang string) *brid
 			FormattedBody: formatted,
 		},
 		Extra: map[string]any{"fi.mau.telegram.media_skipped": map[string]any{"size": document.Size, "name": name}},
+	}
+}
+
+// roomSkippedPhotoPart is the notice sent instead of a photo when the room's settings skip media.
+func roomSkippedPhotoPart(msg *tg.Message, lang string) *bridgev2.ConvertedMessagePart {
+	body := mediaFailureText(lang, "photo_room")
+	formatted := html.EscapeString(body)
+	if link := getMessageLink(msg); link != "" {
+		open := mediaFailureText(lang, "open")
+		body += " " + open + ": " + link
+		formatted += fmt.Sprintf(` <a href="%s">%s</a>`, html.EscapeString(link), html.EscapeString(open))
+	}
+	return &bridgev2.ConvertedMessagePart{
+		Type: event.EventMessage,
+		Content: &event.MessageEventContent{
+			MsgType:       event.MsgNotice,
+			Body:          body,
+			Format:        event.FormatHTML,
+			FormattedBody: formatted,
+		},
+		Extra: map[string]any{"fi.mau.telegram.media_skipped": map[string]any{"reason": "room_settings"}},
 	}
 }
 
@@ -938,6 +972,13 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		if tc.main.Config.ShouldSkipMedia(string(portal.ID), string(ids.GetMessageIDFromMessage(msg)), document.Size) {
 			log.Info().Int64("size", document.Size).Msg("Not bridging file, it matches a skip_media rule")
 			converted = skippedMediaPart(msg, document, tc.folderSpaces.language())
+			return
+		}
+		if skipMediaByRoomSettings(portal, document.Size) {
+			log.Info().Int64("size", document.Size).Msg("Not bridging file because of the room's settings")
+			converted = skippedMediaPart(msg, document, tc.folderSpaces.language())
+			converted.Content.Body = strings.Replace(converted.Content.Body, mediaFailureText(tc.folderSpaces.language(), "by_admin"), mediaFailureText(tc.folderSpaces.language(), "by_room"), 1)
+			converted.Content.FormattedBody = strings.Replace(converted.Content.FormattedBody, mediaFailureText(tc.folderSpaces.language(), "by_admin"), mediaFailureText(tc.folderSpaces.language(), "by_room"), 1)
 			return
 		}
 

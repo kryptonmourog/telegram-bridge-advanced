@@ -349,6 +349,9 @@ func (tc *TelegramClient) queueRemoteEvent(evt bridgev2.RemoteEvent) bridgev2.Ev
 		if peerType, chatID, _, err := ids.ParsePortalID(key.ID); err == nil && tc.folderSpaces.skipArchivedPeer(peerForID(peerType, chatID)) {
 			return bridgev2.EventHandlingResultIgnored
 		}
+		if pausableEvents[evt.GetType()] && tc.isPausedPortal(context.Background(), key) {
+			return bridgev2.EventHandlingResultIgnored
+		}
 	}
 	return tc.main.Bridge.QueueRemoteEvent(tc.userLogin, evt)
 }
