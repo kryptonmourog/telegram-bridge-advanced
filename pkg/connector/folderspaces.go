@@ -812,7 +812,7 @@ func (fs *folderSpaceManager) Status(ctx context.Context) (string, error) {
 	meta := fs.tc.metadata.FolderSpaces
 	lang := fs.language()
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Language: `%s` (supported: %s)\n\n", lang, strings.Join(supportedFolderSpaceLanguages(), ", "))
+	fmt.Fprintf(&sb, translateTo(lang, "Language: `%s` (supported: %s)\n\n"), lang, strings.Join(supportedFolderSpaceLanguages(), ", "))
 	for i, entry := range entries {
 		var name string
 		var room id.RoomID
@@ -831,9 +831,9 @@ func (fs *folderSpaceManager) Status(ctx context.Context) (string, error) {
 		if meta != nil && room != "" {
 			count = len(meta.Children[room])
 		}
-		state := fmt.Sprintf("%d rooms", count)
+		state := fmt.Sprintf(translateTo(lang, "%d rooms"), count)
 		if room == "" {
-			state = "no space yet"
+			state = translateTo(lang, "no space yet")
 		}
 		fmt.Fprintf(&sb, "%d. %s — %s\n", i+1, name, state)
 	}

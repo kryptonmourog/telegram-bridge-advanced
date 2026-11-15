@@ -362,7 +362,7 @@ func (bl *baseLogin) finalizeLogin(
 	return &bridgev2.LoginStep{
 		Type:         bridgev2.LoginStepTypeComplete,
 		StepID:       LoginStepIDComplete,
-		Instructions: fmt.Sprintf("Successfully logged in as %s (`%d`)", ul.RemoteName, self.ID),
+		Instructions: fmt.Sprintf(client.tl("Successfully logged in as %s (`%d`)"), ul.RemoteName, self.ID),
 		CompleteParams: &bridgev2.LoginCompleteParams{
 			UserLoginID: ul.ID,
 			UserLogin:   ul,

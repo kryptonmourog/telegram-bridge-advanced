@@ -89,7 +89,7 @@ func (pl *PhoneLogin) SubmitUserInput(ctx context.Context, input map[string]stri
 	}
 }
 
-func phoneCodeStep(codeType tg.AuthSentCodeTypeClass) (*bridgev2.LoginStep, error) {
+func phoneCodeStep(codeType tg.AuthSentCodeTypeClass, t func(string) string) (*bridgev2.LoginStep, error) {
 	description := "The code was sent to the Telegram app on your phone"
 	switch typedCodeType := codeType.(type) {
 	case *tg.AuthSentCodeTypeSMS, *tg.AuthSentCodeTypeSMSWord, *tg.AuthSentCodeTypeSMSPhrase:
@@ -97,9 +97,9 @@ func phoneCodeStep(codeType tg.AuthSentCodeTypeClass) (*bridgev2.LoginStep, erro
 	case *tg.AuthSentCodeTypeCall:
 		description = "The code will be read to you in a phone call"
 	case *tg.AuthSentCodeTypeEmailCode:
-		description = fmt.Sprintf("The code was sent to your email (%s)", typedCodeType.EmailPattern)
+		description = fmt.Sprintf(t("The code was sent to your email (%s)"), typedCodeType.EmailPattern)
 	case *tg.AuthSentCodeTypeFragmentSMS:
-		description = fmt.Sprintf("The code was sent to your Fragment account (%s)", typedCodeType.URL)
+		description = fmt.Sprintf(t("The code was sent to your Fragment account (%s)"), typedCodeType.URL)
 	case *tg.AuthSentCodeTypeSetUpEmailRequired:
 		return nil, ErrLoginEmailRequired
 	}
@@ -156,7 +156,7 @@ func (pl *PhoneLogin) submitNumber(ctx context.Context, phone string) (*bridgev2
 			Type("next_type", s.NextType).
 			Int("timeout", s.Timeout).
 			Msg("Login code sent")
-		return phoneCodeStep(s.Type)
+		return phoneCodeStep(s.Type, pl.t)
 	case *tg.AuthSentCodeSuccess:
 		switch authorization := s.Authorization.(type) {
 		case *tg.AuthAuthorization:

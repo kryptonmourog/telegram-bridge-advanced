@@ -18,6 +18,11 @@ package connector
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"go.mau.fi/util/exfmt"
 
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/id"
@@ -33,15 +38,23 @@ func (tc *TelegramConnector) installTranslator() {
 }
 
 func (tc *TelegramConnector) translate(ctx context.Context, userID id.UserID, msg string) string {
-	if msg == "" {
-		return msg
-	}
-	catalog, ok := translations[tc.userLanguage(ctx, userID)]
-	if !ok {
+	return translateTo(tc.userLanguage(ctx, userID), msg)
+}
+
+// translateTo looks msg up in the catalog of lang. An error text like "failed to do X: details" that
+// isn't in the catalog as a whole is translated by its first part.
+func translateTo(lang, msg string) string {
+	catalog, ok := translations[lang]
+	if !ok || msg == "" {
 		return msg
 	}
 	if tr, ok := catalog[msg]; ok {
 		return tr
+	}
+	if head, rest, ok := strings.Cut(msg, ": "); ok {
+		if tr, ok := catalog[head]; ok {
+			return tr + ": " + rest
+		}
 	}
 	return msg
 }
@@ -66,6 +79,44 @@ func (tc *TelegramConnector) userLanguage(ctx context.Context, userID id.UserID)
 // t translates a text of the bridge for the user of this login.
 func (tc *TelegramClient) t(ctx context.Context, msg string) string {
 	return tc.main.translate(ctx, tc.userLogin.UserMXID, msg)
+}
+
+// tl translates a text put into rooms of this login (service messages, placeholders) into its language.
+func (tc *TelegramClient) tl(msg string) string {
+	return translateTo(tc.folderSpaces.language(), msg)
+}
+
+// t translates a text of the login process for the user logging in.
+func (bl *baseLogin) t(msg string) string {
+	return bl.main.translate(context.Background(), bl.user.MXID, msg)
+}
+
+// formatDuration formats a call or video chat duration in the language of this login.
+func (tc *TelegramClient) formatDuration(d time.Duration) string {
+	if tc.folderSpaces.language() != "ru" {
+		return exfmt.Duration(d)
+	}
+	d = d.Round(time.Second)
+	h, m, sec := int(d/time.Hour), int(d%time.Hour/time.Minute), int(d%time.Minute/time.Second)
+	var parts []string
+	if h > 0 {
+		parts = append(parts, fmt.Sprintf("%d ч", h))
+	}
+	if m > 0 {
+		parts = append(parts, fmt.Sprintf("%d мин", m))
+	}
+	if sec > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%d с", sec))
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatDateTime formats a scheduled time in the language of this login.
+func (tc *TelegramClient) formatDateTime(t time.Time) string {
+	if tc.folderSpaces.language() == "ru" {
+		return t.Format("02.01 15:04")
+	}
+	return t.Format("Jan 2, 15:04")
 }
 
 var translations = map[string]map[string]string{
@@ -203,12 +254,12 @@ var ruTranslations = map[string]string{
 	"Options: `%s`":                                                                                                      "Варианты: `%s`",
 	"Enter `skip` to skip this field":                                                                                    "Введите `skip`, чтобы пропустить",
 	"Usage: `$cmdprefix relogin <login ID> [_flow ID_]`\n\nYour logins:\n\n%s":                                           "Использование: `$cmdprefix relogin <ID входа> [_способ_]`\n\nВаши входы:\n\n%s",
-	"You have reached the maximum number of logins (%d). ":                                                               "Достигнуто максимальное число входов (%d). ",
-	"You already have an ongoing %s. You can use `$cmdprefix cancel` to cancel it.":                                      "У вас уже идёт %s. Отменить: `$cmdprefix cancel`.",
-	"No login flows available.":                                                                                          "Нет доступных способов входа.",
-	"Invalid login flow `%s`. Available options:\n\n%s":                                                                  "Неизвестный способ входа `%s`. Доступны:\n\n%s",
-	"Please specify a login flow, e.g. `relogin %s %s`.\n\n%s":                                                           "Укажите способ входа, например `relogin %s %s`.\n\n%s",
-	"Please specify a login flow, e.g. `login %s`.\n\n%s":                                                                "Укажите способ входа, например `login %s`.\n\n%s",
+	"You have reached the maximum number of logins (%d). Please logout from an existing login before creating a new one. If you want to re-authenticate an existing login, use the `$cmdprefix relogin` command.": "Достигнуто максимальное число входов (%d). Сначала выйдите из одного из входов. Чтобы войти заново в существующий, используйте `$cmdprefix relogin`.",
+	"You already have an ongoing %s. You can use `$cmdprefix cancel` to cancel it.": "У вас уже идёт %s. Отменить: `$cmdprefix cancel`.",
+	"No login flows available.":                                "Нет доступных способов входа.",
+	"Invalid login flow `%s`. Available options:\n\n%s":        "Неизвестный способ входа `%s`. Доступны:\n\n%s",
+	"Please specify a login flow, e.g. `relogin %s %s`.\n\n%s": "Укажите способ входа, например `relogin %s %s`.\n\n%s",
+	"Please specify a login flow, e.g. `login %s`.\n\n%s":      "Укажите способ входа, например `login %s`.\n\n%s",
 	"⚠️ This is not your management room. Entering login info must be prefixed with `$cmdprefix` like other commands.": "⚠️ Это не ваша комната управления. Данные для входа, как и команды, нужно начинать с `$cmdprefix`.",
 	"Failed to prepare login process: %v":                           "Не удалось подготовить вход: %v",
 	"Failed to start login: %v":                                     "Не удалось начать вход: %v",
@@ -394,4 +445,237 @@ var ruTranslations = map[string]string{
 	"Your message was not bridged":                                      "Ваше сообщение не доставлено в Telegram",
 	"Your message may not have been bridged":                            "Ваше сообщение, возможно, не доставлено в Telegram",
 	"Handling your command panicked":                                    "Команда завершилась аварийно",
+
+	// Commands of the Matrix connector (mautrix-go bridgev2/matrix)
+	"Discard the Megolm session in the room":                             "Сбросить сессию Megolm в комнате",
+	"This bridge instance doesn't have end-to-bridge encryption enabled": "В этом мосте шифрование не включено",
+	"Successfully reset Megolm session in this room. New decryption keys will be shared the next time a message is sent from the remote network.": "Сессия Megolm в комнате сброшена. Новые ключи будут отправлены со следующим сообщением из Telegram.",
+	"Change the power level in a portal room.":                          "Изменить уровень прав в комнате чата.",
+	"[_user ID_] <_power level_>":                                       "[_ID пользователя_] <_уровень прав_>",
+	"Invalid power level \"%s\"":                                        "Неверный уровень прав «%s»",
+	"Invalid user ID \"%s\"":                                            "Неверный ID пользователя «%s»",
+	"**Usage:** `set-pl [user] <level>`":                                "**Использование:** `set-pl [пользователь] <уровень>`",
+	"Failed to set power levels: %v":                                    "Не удалось изменить права: %v",
+	"Enable double puppeting.":                                          "Включить double puppeting.",
+	"<_access token_>":                                                  "<_токен доступа_>",
+	"You don't have permission to manage double puppeting.":             "У вас нет прав управлять double puppeting.",
+	"**Usage:** `login-matrix <access token>`":                          "**Использование:** `login-matrix <токен доступа>`",
+	"Failed to enable double puppeting: %v":                             "Не удалось включить double puppeting: %v",
+	"Successfully switched puppets":                                     "Double puppeting включён",
+	"Ping the Matrix server with the double puppet.":                    "Проверить связь с сервером Matrix от имени double puppet.",
+	"You don't have double puppeting enabled.":                          "У вас не включён double puppeting.",
+	"Failed to validate Matrix login: %v":                               "Не удалось проверить вход в Matrix: %v",
+	"Confirmed valid access token for %s (appservice double puppeting)": "Токен доступа для %s действителен (double puppeting через appservice)",
+	"Confirmed valid access token for %s / %s":                          "Токен доступа для %s / %s действителен",
+	"Disable double puppeting.":                                         "Выключить double puppeting.",
+	"Successfully disabled double puppeting.":                           "Double puppeting выключен.",
+	"Get the bridge version.":                                           "Показать версию моста.",
+
+	// More command replies and arguments
+	"[`on` | `off`]": "[`on` | `off`]",
+	"<_login ID_> <_push type_> <_push token_>":                "<_ID входа_> <_тип push_> <_push-токен_>",
+	"Usage: `$cmdprefix debug-account-data <type> <content>":   "Использование: `$cmdprefix debug-account-data <тип> <содержимое>",
+	"<_type_> <_content_>":                                     "<_тип_> <_содержимое_>",
+	"[--reset-transport]":                                      "[--reset-transport]",
+	"<url>":                                                    "<url>",
+	"Invalid extra parameters for display and wait login step": "Неверные дополнительные параметры для шага входа с ожиданием",
+	"Invalid extra parameters for webauthn login step":         "Неверные дополнительные параметры для шага входа WebAuthn",
+	"Invalid extra parameters for client HTTP login step":      "Неверные дополнительные параметры для шага входа через HTTP клиента",
+	"Unsupported display type %q":                              "Неподдерживаемый тип отображения %q",
+	"Failed to parse curl: %v":                                 "Не удалось разобрать curl: %v",
+	"Failed to parse cookie %s: %v":                            "Не удалось разобрать cookie %s: %v",
+	"Some keys can't be extracted from a cURL request: %+v\n\nPlease provide a JSON object instead.": "Некоторые ключи не удалось извлечь из запроса cURL: %+v\n\nПришлите вместо него JSON-объект.",
+	"Missing some keys: %+v":         "Не хватает ключей: %+v",
+	"Failed to send attachments: %v": "Не удалось отправить вложения: %v",
+	"This login flow requires a client that supports client HTTP requests":                                                             "Этот способ входа требует клиента с поддержкой HTTP-запросов",
+	"I don't have sufficient permissions for `m.bridge` events. Adjust power levels or use the `--ignore-permissions` flag to ignore.": "У бота не хватает прав на события `m.bridge`. Измените права или добавьте `--ignore-permissions`.",
+	"Only users with relay management permissions can use sync-portal through the relay":                                               "Через ретрансляцию sync-portal могут использовать только те, кто управляет ретрансляцией",
+	"[--for-everyone]":                            "[--for-everyone]",
+	"[--report-spam]":                             "[--report-spam]",
+	"<allow/deny> <chat ID> [receiver]":           "<allow/deny> <ID чата> [получатель]",
+	"Usage: %s <allow/deny> <chat ID> [receiver]": "Использование: %s <allow/deny> <ID чата> [получатель]",
+	"%s is already on the allow list":             "%s уже в списке разрешённых",
+	"Added %s to allow list":                      "%s добавлен в список разрешённых",
+	"%s is not on the deny list":                  "%s нет в списке запрещённых",
+	"Removed %s from deny list":                   "%s убран из списка запрещённых",
+	"%s is not on the allow list":                 "%s нет в списке разрешённых",
+	"Removed %s from allow list":                  "%s убран из списка разрешённых",
+	"%s is already on the deny list":              "%s уже в списке запрещённых",
+	"Added %s to deny list":                       "%s добавлен в список запрещённых",
+	"You're not logged in and there are no default relay users configured":                                                        "Вы не вошли, а ретрансляторы по умолчанию не настроены",
+	"Failed to get logins in portal to find default relay":                                                                        "Не удалось получить входы в комнате, чтобы найти ретранслятор по умолчанию",
+	"You're not allowed to use yourself as relay and none of the default relay users are in the chat":                             "Вам нельзя быть ретранслятором, а ретрансляторов по умолчанию в чате нет",
+	"None of the default relay users are in the chat. If you want to use yourself as the relay, specify your login ID explicitly": "В чате нет ретрансляторов по умолчанию. Чтобы ретранслировать через себя, явно укажите ID своего входа",
+	"You're not logged in and none of the default relay users are in the chat":                                                    "Вы не вошли, а ретрансляторов по умолчанию в чате нет",
+	"In split portals, only the receiver (%s) can be set as relay":                                                                "В раздельных комнатах ретранслятором может быть только получатель (%s)",
+	"User login with ID `%s` not found":                                                                                           "Вход с ID `%s` не найден",
+	"Only bridge admins can set another user's login as the relay":                                                                "Назначить ретранслятором чужой вход могут только администраторы моста",
+	"You're not allowed to use yourself as relay":                                                                                 "Вам нельзя быть ретранслятором",
+	"Messages sent by users who haven't logged in will now be relayed through %s ([%s](%s)'s login)":                              "Сообщения пользователей без входа теперь ретранслируются через %s (вход [%s](%s))",
+	"This bridge does not support %s":                                                                                             "Этот мост не поддерживает %s",
+	"Identifier <code>%s</code> not found":                                                                                        "Идентификатор <code>%s</code> не найден",
+	"Matrix connector doesn't support fetching room state":                                                                        "Matrix-коннектор не умеет получать состояние комнаты",
+	"No group creation types defined in network capabilities":                                                                     "Мост не поддерживает создание групп",
+	"Please specify type of group to create: `%s`":                                                                                "Укажите тип создаваемой группы: `%s`",
+	"Successfully created group `%s`%s":                                                                                           "Группа `%s` создана%s",
+	"You're not logged in and none of the default relays were found":                                                              "Вы не вошли, а ретрансляторы по умолчанию не найдены",
+	"No portal found with ID %s. Try `$cmdprefix filter allow` instead":                                                           "Чат с ID %s не найден. Попробуйте `$cmdprefix filter allow`",
+	"[--create] <_user ID_> <_command_> [_args..._]":                                                                              "[--create] <_ID пользователя_> <_команда_> [_аргументы..._]",
+	"Usage: `$cmdprefix sudo [--create] <user ID> <command> [args...]`":                                                           "Использование: `$cmdprefix sudo [--create] <ID пользователя> <команда> [аргументы...]`",
+	"Invalid user ID `%s`": "Неверный ID пользователя `%s`",
+	"Failed to get user":   "Не удалось получить пользователя",
+	"User not found. Use `--create` if you want to run commands as a user who has never used the bridge.": "Пользователь не найден. Чтобы выполнить команду от имени того, кто ещё не пользовался мостом, добавьте `--create`.",
+	"<_room ID_> <_command_> [_args..._]":                    "<_ID комнаты_> <_команда_> [_аргументы..._]",
+	"Usage: `$cmdprefix doin <room ID> <command> [args...]`": "Использование: `$cmdprefix doin <ID комнаты> <команда> [аргументы...]`",
+	"Failed to check if you're in the target room":           "Не удалось проверить, есть ли вы в нужной комнате",
+	"You must be in the target room to run commands there":   "Чтобы выполнять там команды, нужно быть в этой комнате",
+	"Successfully logged in as %s (`%d`)":                    "Вы вошли как %s (`%d`)",
+	"The code was sent to your email (%s)":                   "Код отправлен на почту (%s)",
+	"The code was sent to your Fragment account (%s)":        "Код отправлен в аккаунт Fragment (%s)",
+
+	// Errors of messages sent from Matrix
+	"panic in event handler":                            "сбой при обработке события",
+	"this bridge does not support edits":                "мост не поддерживает правки",
+	"edits are not allowed in this chat":                "в этом чате правки запрещены",
+	"captions are not supported here":                   "подписи здесь не поддерживаются",
+	"location messages are not supported here":          "геопозиции здесь не поддерживаются",
+	"the message is too old to be edited":               "сообщение слишком старое для правки",
+	"the message has been edited too many times":        "сообщение правили слишком много раз",
+	"this bridge does not support reactions":            "мост не поддерживает реакции",
+	"this bridge does not support polls":                "мост не поддерживает опросы",
+	"vote target poll not found":                        "опрос для голоса не найден",
+	"this bridge does not support deleting messages":    "мост не поддерживает удаление сообщений",
+	"unexpected parsed content type":                    "неожиданный тип содержимого",
+	"internal database error":                           "внутренняя ошибка базы данных",
+	"target message not found":                          "исходное сообщение не найдено",
+	"unsupported message type":                          "неподдерживаемый тип сообщения",
+	"unsupported media type":                            "неподдерживаемый тип медиа",
+	"unsupported view-limited type":                     "неподдерживаемый тип одноразового медиа",
+	"media duration too long":                           "медиа слишком длинное",
+	"voice message too long":                            "голосовое сообщение слишком длинное",
+	"media too large":                                   "файл слишком большой",
+	"failed to download media":                          "не удалось скачать медиа",
+	"failed to reupload media":                          "не удалось перезагрузить медиа",
+	"failed to convert media":                           "не удалось преобразовать медиа",
+	"remote echo timed out":                             "Telegram не подтвердил сообщение вовремя",
+	"remote ack timed out":                              "Telegram не подтвердил сообщение вовремя",
+	"public media is not enabled in the bridge config":  "публичные медиа не включены в конфиге моста",
+	"failed to generate public media URL":               "не удалось создать публичную ссылку на медиа",
+	"invalid disappearing timer":                        "неверный таймер исчезающих сообщений",
+	"you don't have permission to send messages":        "у вас нет прав отправлять сообщения",
+	"you don't have permission to use commands":         "у вас нет прав использовать команды",
+	"Unsupported reaction":                              "Неподдерживаемая реакция",
+	"View limit does not match the message":             "Ограничение просмотров не совпадает с сообщением",
+	"Invalid view-limited media message":                "Неверное одноразовое медиа",
+	"Outgoing media is not view-limited":                "Исходящее медиа не одноразовое",
+	"sent as a comment":                                 "отправлено комментарием",
+	"handled as a bot button press":                     "обработано как нажатие кнопки бота",
+	"Processing messages from Telegram is stuck":        "Обработка сообщений из Telegram зависла",
+	"An error occurred while processing an incoming %s": "Ошибка при обработке входящего события %s",
+	"Set the disappearing message timer to %s":          "Таймер исчезающих сообщений: %s",
+	"Room has been replaced.":                           "Комната заменена.",
+	"This room has been merged":                         "Эта комната объединена с другой",
+
+	// Telegram errors (humanise), the most common ones
+	"You can't write in this chat": "Вы не можете писать в этот чат",
+	"Chat admin privileges are required to do that in the specified chat (for example, to send a message in a channel which is not yours), or invalid permissions used for the channel or group": "Для этого нужны права администратора чата (например, чтобы писать в чужой канал)",
+	"The channel specified is private and you lack permission to access it. Another reason may be that you were banned from it":                                                                  "Канал закрыт, и у вас нет к нему доступа (или вас в нём заблокировали)",
+	"You're banned from sending messages in supergroups/channels": "Вам запрещено писать в супергруппах и каналах",
+	"Message was too long":                    "Сообщение слишком длинное",
+	"Empty or invalid UTF-8 message was sent": "Сообщение пустое или в неверной кодировке",
+	"Content of the message was not modified": "Сообщение не изменилось",
+	"The specified message ID is invalid or you can't do that operation on such message":                              "Неверный ID сообщения, или с таким сообщением это сделать нельзя",
+	"You can't edit this message anymore, too much time has passed since its creation.":                               "Это сообщение уже нельзя изменить: прошло слишком много времени.",
+	"You can't delete one of the messages you tried to delete, most likely because it is a service message.":          "Одно из сообщений нельзя удалить, скорее всего это служебное сообщение.",
+	"The provided media object is invalid or the current account may not be able to send it (such as games as users)": "Медиа неверное, или этот аккаунт не может его отправить",
+	"Media invalid":           "Неверное медиа",
+	"The caption is too long": "Подпись слишком длинная",
+	"An invalid Peer was used. Make sure to pass the right peer type and that the value is valid (for instance, bots cannot start conversations)": "Неверный получатель (например, боты не могут сами начинать диалог)",
+	"User is blocked":       "Пользователь заблокирован",
+	"You blocked this user": "Вы заблокировали этого пользователя",
+	"The user's privacy settings do not allow you to do this":                              "Настройки приватности пользователя этого не разрешают",
+	"You can't send media in this chat":                                                    "В этот чат нельзя отправлять медиа",
+	"You can't send stickers in this chat":                                                 "В этот чат нельзя отправлять стикеры",
+	"You can't send gifs in this chat":                                                     "В этот чат нельзя отправлять GIF",
+	"You cannot send photos results in this chat":                                          "В этот чат нельзя отправлять фото",
+	"You cannot send videos results in this Chat":                                          "В этот чат нельзя отправлять видео",
+	"You cannot send voices results in this chat":                                          "В этот чат нельзя отправлять голосовые",
+	"You cannot send plain results in this chat":                                           "В этот чат нельзя отправлять текст",
+	"The chat is restricted and cannot be used in that request":                            "Чат ограничен, это действие в нём недоступно",
+	"Invalid reaction provided (only emoji are allowed)":                                   "Неверная реакция (можно только эмодзи)",
+	"A premium account is required to execute this action":                                 "Для этого нужен Telegram Premium",
+	"The chat the user tried to join has expired and is not valid anymore":                 "Ссылка на чат истекла",
+	"The invite hash is invalid":                                                           "Неверная ссылка-приглашение",
+	"You have successfully requested to join this chat or channel":                         "Заявка на вступление отправлена",
+	"The authenticated user is already a participant of the chat":                          "Вы уже участник этого чата",
+	"You have joined too many channels/supergroups":                                        "Вы состоите в слишком многих каналах и супергруппах",
+	"The phone code entered was invalid":                                                   "Неверный код",
+	"The confirmation code has expired":                                                    "Срок действия кода истёк",
+	"The phone number is invalid":                                                          "Неверный номер телефона",
+	"The password (and thus its hash value) you entered is invalid":                        "Неверный пароль",
+	"The key is not registered in the system":                                              "Сессия не зарегистрирована (нужно войти заново)",
+	"The authorization has been invalidated, because of the user terminating all sessions": "Сессия завершена: в Telegram были закрыты все сеансы",
+	"The topic was deleted":                                                                "Тема удалена",
+	"The message ID used in the peer was invalid":                                          "Неверный ID сообщения",
+	"The bot did not answer to the callback query in time":                                 "Бот не ответил на нажатие кнопки вовремя",
+	"This user's privacy settings forbid you from sending voice messages":                  "Настройки приватности пользователя запрещают голосовые сообщения",
+	"You can't send messages as the specified peer":                                        "Нельзя отправлять сообщения от имени этого отправителя",
+
+	// Texts in rooms
+	"%s are not yet supported. Open Telegram to view.": "%s пока не поддерживается. Откройте Telegram, чтобы посмотреть.",
+	"Empty message":               "Пустое сообщение",
+	"Forwarded message from %s%s": "Переслано от %s%s",
+	"unknown user":                "неизвестного пользователя",
+	"unknown chat":                "неизвестного чата",
+	"unknown channel":             "неизвестного канала",
+	"unknown source":              "неизвестного источника",
+	"You received a view once photo. For added privacy, you can only open it on the Telegram app.": "Вам прислали одноразовое фото. Открыть его можно только в приложении Telegram.",
+	"You received a view once file. For added privacy, you can only open it on the Telegram app.":  "Вам прислали одноразовый файл. Открыть его можно только в приложении Telegram.",
+	"Unsupported photo message. Check Telegram app.":                                               "Неподдерживаемое фото. Посмотрите в Telegram.",
+	"Unsupported document message. Check Telegram app.":                                            "Неподдерживаемый файл. Посмотрите в Telegram.",
+	"Unsupported media message. Check Telegram app.":                                               "Неподдерживаемое медиа. Посмотрите в Telegram.",
+	"Unsupported location message. Check Telegram app.":                                            "Неподдерживаемая геопозиция. Посмотрите в Telegram.",
+	"Voice message":                  "Голосовое сообщение",
+	"Shared contact info for %s: %s": "Контакт %s: %s",
+	"Live Location (see your Telegram client for live updates)": "Трансляция геопозиции (обновления — в Telegram)",
+	"Location": "Геопозиция",
+	"Poll: %s\n%s\nOpen the Telegram app to vote.":                       "Опрос: %s\n%s\nГолосовать — в приложении Telegram.",
+	"<strong>Poll</strong>: %s<ol>%s</ol>Open the Telegram app to vote.": "<strong>Опрос</strong>: %s<ol>%s</ol>Голосовать — в приложении Telegram.",
+	"Game: %s. Open the Telegram app to play.":                           "Игра: %s. Играть — в приложении Telegram.",
+	" Dart throw":                         " Бросок дротика",
+	" Dice roll":                          " Бросок кубика",
+	" Basketball throw":                   " Бросок мяча в корзину",
+	" Slot machine":                       " Игровой автомат",
+	" Bowling":                            " Боулинг",
+	" Football kick":                      " Удар по мячу",
+	" result: ":                           ", результат: ",
+	"miss":                                "мимо",
+	"1 pin down":                          "сбита 1 кегля",
+	"3 pins down, split":                  "сбиты 3 кегли, сплит",
+	"4 pins down, split":                  "сбиты 4 кегли, сплит",
+	"5 pins down":                         "сбиты 5 кеглей",
+	"strike 🎉":                            "страйк 🎉",
+	"hit the woodwork":                    "в штангу",
+	"goal":                                "гол",
+	"goal 🎉":                              "гол 🎉",
+	"Created the group":                   "Группа создана",
+	"Video call missed":                   "Пропущенный видеозвонок",
+	"Video call disconnected":             "Видеозвонок прерван",
+	"Video call ended":                    "Видеозвонок завершён",
+	"Video call rejected":                 "Видеозвонок отклонён",
+	"Call missed":                         "Пропущенный звонок",
+	"Call disconnected":                   "Звонок прерван",
+	"Call ended":                          "Звонок завершён",
+	"Call rejected":                       "Звонок отклонён",
+	"Started a video call":                "Начат видеозвонок",
+	"Started a call":                      "Начат звонок",
+	"Started a video chat":                "Начат видеочат",
+	"Ended the video chat (%s)":           "Видеочат завершён (%s)",
+	"Video chat scheduled for %s":         "Видеочат запланирован на %s",
+	"Upgraded this group to a supergroup": "Группа преобразована в супергруппу",
+	"Language: `%s` (supported: %s)\n\n":  "Язык: `%s` (доступны: %s)\n\n",
+	"%d rooms":                            "комнат: %d",
+	"no space yet":                        "пространства ещё нет",
+	"Failed to get login to handle event": "Не найден вход для обработки события",
+	"sender not found for event":          "отправитель события не найден",
 }

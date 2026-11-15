@@ -37,3 +37,18 @@ func TestTranslationsKeepFormatVerbs(t *testing.T) {
 		}
 	}
 }
+
+func TestTranslateTo(t *testing.T) {
+	cases := []struct{ lang, in, want string }{
+		{"ru", "Log out of the bridge", "Выйти из моста"},
+		{"ru", "failed to download media: timeout", "не удалось скачать медиа: timeout"},
+		{"ru", "not in the catalog: details", "not in the catalog: details"},
+		{"en", "Log out of the bridge", "Log out of the bridge"},
+		{"de", "Log out of the bridge", "Log out of the bridge"},
+	}
+	for _, c := range cases {
+		if got := translateTo(c.lang, c.in); got != c.want {
+			t.Errorf("translateTo(%q, %q) = %q, want %q", c.lang, c.in, got, c.want)
+		}
+	}
+}

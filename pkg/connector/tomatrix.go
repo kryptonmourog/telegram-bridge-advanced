@@ -108,20 +108,20 @@ func (tc *TelegramClient) mediaToMatrix(
 	case tg.MessageMediaContactTypeID:
 		return tc.convertContact(media), nil, nil
 	case tg.MessageMediaGeoTypeID, tg.MessageMediaGeoLiveTypeID, tg.MessageMediaVenueTypeID:
-		return convertLocation(media), nil, nil
+		return convertLocation(media, tc.tl), nil, nil
 	case tg.MessageMediaPollTypeID:
 		return tc.convertPoll(ctx, media), nil, nil
 	case tg.MessageMediaDiceTypeID:
-		return convertDice(media), nil, nil
+		return convertDice(media, tc.tl), nil, nil
 	case tg.MessageMediaGameTypeID:
-		return convertGame(media), nil, nil
+		return convertGame(media, tc.tl), nil, nil
 	default:
 		// TODO: support these properly
 		return &bridgev2.ConvertedMessagePart{
 			Type: event.EventMessage,
 			Content: &event.MessageEventContent{
 				MsgType: event.MsgNotice,
-				Body:    fmt.Sprintf("%s are not yet supported. Open Telegram to view.", media.TypeName()),
+				Body:    fmt.Sprintf(tc.tl("%s are not yet supported. Open Telegram to view."), media.TypeName()),
 			},
 			Extra: map[string]any{
 				"fi.mau.telegram.unsupported": true,
@@ -241,7 +241,7 @@ func (tc *TelegramClient) convertToMatrix(
 			Type: event.EventMessage,
 			Content: &event.MessageEventContent{
 				MsgType: event.MsgNotice,
-				Body:    "Empty message",
+				Body:    tc.tl("Empty message"),
 			},
 			Extra: map[string]any{
 				"fi.mau.telegram.unexpected_empty_message": true,
@@ -524,7 +524,7 @@ func (tc *TelegramClient) addForwardHeader(ctx context.Context, part *bridgev2.C
 				}
 			}
 			mxid = ghost.Intent.GetMXID()
-			fwdFromText = cmp.Or(ghost.Name, fwd.FromName, "unknown user")
+			fwdFromText = cmp.Or(ghost.Name, fwd.FromName, tc.tl("unknown user"))
 		}
 		fwdFromHTML = fmt.Sprintf(
 			`<a href="%s">%s</a>`,
@@ -532,10 +532,10 @@ func (tc *TelegramClient) addForwardHeader(ctx context.Context, part *bridgev2.C
 			html.EscapeString(fwdFromText),
 		)
 	case *tg.PeerChannel, *tg.PeerChat:
-		unknownType := "unknown chat"
+		unknownType := tc.tl("unknown chat")
 		var channelID int64
 		if ch, ok := from.(*tg.PeerChannel); ok {
-			unknownType = "unknown channel"
+			unknownType = tc.tl("unknown channel")
 			channelID = ch.ChannelID
 		}
 		portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, tc.makePortalKeyFromPeer(from, 0))
@@ -575,7 +575,7 @@ func (tc *TelegramClient) addForwardHeader(ctx context.Context, part *bridgev2.C
 		fwdFromHTML = fmt.Sprintf("<strong>%s</strong>", html.EscapeString(fwd.FromName))
 	}
 	if fwdFromText == "" {
-		fwdFromText = "unknown source"
+		fwdFromText = tc.tl("unknown source")
 		fwdFromHTML = fwdFromText
 	}
 
@@ -597,7 +597,7 @@ func (tc *TelegramClient) addForwardHeader(ctx context.Context, part *bridgev2.C
 		existingBodyLines = append([]string{"\n"}, existingBodyLines...)
 	}
 	part.Content.Body = fmt.Sprintf(
-		"Forwarded message from %s%s",
+		tc.tl("Forwarded message from %s%s"),
 		fwdFromText, strings.Join(existingBodyLines, "\n"),
 	)
 	existingFormattedBody := part.Content.FormattedBody
@@ -605,7 +605,7 @@ func (tc *TelegramClient) addForwardHeader(ctx context.Context, part *bridgev2.C
 		existingFormattedBody = fmt.Sprintf("<br><blockquote data-telegram-forward>%s</blockquote>", existingFormattedBody)
 	}
 	part.Content.FormattedBody = fmt.Sprintf(
-		"Forwarded message from %s%s",
+		tc.tl("Forwarded message from %s%s"),
 		fwdFromHTML, existingFormattedBody,
 	)
 	return nil
@@ -843,7 +843,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 							Type: event.EventMessage,
 							Content: &event.MessageEventContent{
 								MsgType: event.MsgNotice,
-								Body:    fmt.Sprintf("You received a view once %s. For added privacy, you can only open it on the Telegram app.", typeName),
+								Body:    tc.tl(fmt.Sprintf("You received a view once %s. For added privacy, you can only open it on the Telegram app.", typeName)),
 							},
 						}
 						return
@@ -875,7 +875,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 				Type: event.EventMessage,
 				Content: &event.MessageEventContent{
 					MsgType: event.MsgNotice,
-					Body:    "Unsupported photo message. Check Telegram app.",
+					Body:    tc.tl("Unsupported photo message. Check Telegram app."),
 				},
 			}
 			return
@@ -922,7 +922,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 				Type: event.EventMessage,
 				Content: &event.MessageEventContent{
 					MsgType: event.MsgNotice,
-					Body:    "Unsupported document message. Check Telegram app.",
+					Body:    tc.tl("Unsupported document message. Check Telegram app."),
 				},
 			}
 			return
@@ -968,7 +968,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 					}
 				}
 				if a.Voice {
-					defaultFileName = "Voice message"
+					defaultFileName = tc.tl("Voice message")
 					content.MSC3245Voice = &event.MSC3245Voice{}
 				} else {
 					defaultFileName = "audio_document"
@@ -1058,7 +1058,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 			Type: event.EventMessage,
 			Content: &event.MessageEventContent{
 				MsgType: event.MsgNotice,
-				Body:    "Unsupported media message. Check Telegram app.",
+				Body:    tc.tl("Unsupported media message. Check Telegram app."),
 			},
 		}
 		return
@@ -1160,7 +1160,7 @@ func (tc *TelegramClient) convertContact(media tg.MessageMediaClass) *bridgev2.C
 
 	content := event.MessageEventContent{
 		MsgType: event.MsgText,
-		Body:    fmt.Sprintf("Shared contact info for %s: %s", name, formattedPhone),
+		Body:    fmt.Sprintf(tc.tl("Shared contact info for %s: %s"), name, formattedPhone),
 	}
 	if contact.UserID > 0 {
 		content.Format = event.FormatHTML
@@ -1191,14 +1191,14 @@ type hasGeo interface {
 	GetGeo() tg.GeoPointClass
 }
 
-func convertLocation(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
+func convertLocation(media tg.MessageMediaClass, t func(string) string) *bridgev2.ConvertedMessagePart {
 	g, ok := media.(hasGeo)
 	if !ok || g.GetGeo().TypeID() != tg.GeoPointTypeID {
 		return &bridgev2.ConvertedMessagePart{
 			Type: event.EventMessage,
 			Content: &event.MessageEventContent{
 				MsgType: event.MsgNotice,
-				Body:    "Unsupported location message. Check Telegram app.",
+				Body:    t("Unsupported location message. Check Telegram app."),
 			},
 		}
 	}
@@ -1223,13 +1223,13 @@ func convertLocation(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart 
 	extra := map[string]any{}
 	var note string
 	if media.TypeID() == tg.MessageMediaGeoLiveTypeID {
-		note = "Live Location (see your Telegram client for live updates)"
+		note = t("Live Location (see your Telegram client for live updates)")
 	} else if venue, ok := media.(*tg.MessageMediaVenue); ok {
 		note = venue.Title
 		body = fmt.Sprintf("%s (%s)", venue.Address, body)
 		extra["fi.mau.telegram.venue_id"] = venue.VenueID
 	} else {
-		note = "Location"
+		note = t("Location")
 	}
 
 	extra["org.matrix.msc3488.location"] = map[string]any{
@@ -1272,9 +1272,9 @@ func (tc *TelegramClient) convertPoll(ctx context.Context, media tg.MessageMedia
 		Type: event.EventMessage,
 		Content: &event.MessageEventContent{
 			MsgType:       event.MsgText,
-			Body:          fmt.Sprintf("Poll: %s\n%s\nOpen the Telegram app to vote.", question.Text, strings.Join(textAnswers, "\n")),
+			Body:          fmt.Sprintf(tc.tl("Poll: %s\n%s\nOpen the Telegram app to vote."), question.Text, strings.Join(textAnswers, "\n")),
 			Format:        event.FormatHTML,
-			FormattedBody: fmt.Sprintf(`<strong>Poll</strong>: %s<ol>%s</ol>Open the Telegram app to vote.`, questionHTML, htmlAnswers.String()),
+			FormattedBody: fmt.Sprintf(tc.tl("<strong>Poll</strong>: %s<ol>%s</ol>Open the Telegram app to vote."), questionHTML, htmlAnswers.String()),
 		},
 	}
 	if !tc.main.Config.ExtEvPolls || tc.metadata.IsBot || len(msc3381Answers) != len(poll.Poll.Answers) {
@@ -1312,7 +1312,7 @@ func (tc *TelegramClient) telegramToMatrixText(ctx context.Context, text tg.Text
 	return
 }
 
-func convertDice(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
+func convertDice(media tg.MessageMediaClass, t func(string) string) *bridgev2.ConvertedMessagePart {
 	roll := media.(*tg.MessageMediaDice)
 
 	var result string
@@ -1321,13 +1321,13 @@ func convertDice(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
 
 	switch roll.Emoticon {
 	case "🎯":
-		text.WriteString(" Dart throw")
+		text.WriteString(t(" Dart throw"))
 	case "🎲":
-		text.WriteString(" Dice roll")
+		text.WriteString(t(" Dice roll"))
 	case "🏀":
-		text.WriteString(" Basketball throw")
+		text.WriteString(t(" Basketball throw"))
 	case "🎰":
-		text.WriteString(" Slot machine")
+		text.WriteString(t(" Slot machine"))
 		emojis := map[int]string{
 			0: "🍫",
 			1: "🍒",
@@ -1337,7 +1337,7 @@ func convertDice(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
 		res := roll.Value - 1
 		result = fmt.Sprintf("%s %s %s", emojis[res%4], emojis[res/4%4], emojis[res/16])
 	case "🎳":
-		text.WriteString(" Bowling")
+		text.WriteString(t(" Bowling"))
 		result = map[int]string{
 			1: "miss",
 			2: "1 pin down",
@@ -1347,7 +1347,7 @@ func convertDice(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
 			6: "strike 🎉",
 		}[roll.Value]
 	case "⚽":
-		text.WriteString(" Football kick")
+		text.WriteString(t(" Football kick"))
 		result = map[int]string{
 			1: "miss",
 			2: "hit the woodwork",
@@ -1357,8 +1357,9 @@ func convertDice(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
 		}[roll.Value]
 	}
 
-	text.WriteString(" result: ")
+	text.WriteString(t(" result: "))
 	if len(result) > 0 {
+		result = t(result)
 		text.WriteString(result)
 		text.WriteString(fmt.Sprintf(" (%d)", roll.Value))
 	} else {
@@ -1382,14 +1383,14 @@ func convertDice(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
 	}
 }
 
-func convertGame(media tg.MessageMediaClass) *bridgev2.ConvertedMessagePart {
+func convertGame(media tg.MessageMediaClass, t func(string) string) *bridgev2.ConvertedMessagePart {
 	// TODO (PLAT-25562) provide a richer experience for the game
 	game := media.(*tg.MessageMediaGame)
 	return &bridgev2.ConvertedMessagePart{
 		Type: event.EventMessage,
 		Content: &event.MessageEventContent{
 			MsgType: event.MsgText,
-			Body:    fmt.Sprintf("Game: %s. Open the Telegram app to play.", game.Game.Title),
+			Body:    fmt.Sprintf(t("Game: %s. Open the Telegram app to play."), game.Game.Title),
 		},
 	}
 }

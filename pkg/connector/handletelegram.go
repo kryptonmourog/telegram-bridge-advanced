@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"go.mau.fi/util/exfmt"
 	"go.mau.fi/util/exmaps"
 	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
@@ -508,7 +507,7 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.Mess
 						Type: event.EventMessage,
 						Content: &event.MessageEventContent{
 							MsgType: event.MsgNotice,
-							Body:    "Created the group",
+							Body:    tc.tl("Created the group"),
 						},
 					}},
 				}, nil
@@ -534,7 +533,7 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.Mess
 					Parts: []*bridgev2.ConvertedMessagePart{
 						{
 							Type:    event.EventMessage,
-							Content: &event.MessageEventContent{MsgType: event.MsgNotice, Body: "Created the group"},
+							Content: &event.MessageEventContent{MsgType: event.MsgNotice, Body: tc.tl("Created the group")},
 						},
 					},
 				}, nil
@@ -575,10 +574,13 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.Mess
 			log.Warn().Stringer("end_reason", action.Reason).Msg("Unknown call end reason")
 			return nil
 		}
+		translated := tc.tl(body.String())
+		body.Reset()
+		body.WriteString(translated)
 
 		if action.Duration > 0 {
 			body.WriteString(" (")
-			body.WriteString(exfmt.Duration(time.Duration(action.Duration) * time.Second))
+			body.WriteString(tc.formatDuration(time.Duration(action.Duration) * time.Second))
 			body.WriteString(")")
 		}
 
@@ -600,9 +602,9 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.Mess
 	case *tg.MessageActionGroupCall:
 		var body string
 		if action.Duration == 0 {
-			body = "Started a video chat"
+			body = tc.tl("Started a video chat")
 		} else {
-			body = fmt.Sprintf("Ended the video chat (%s)", exfmt.Duration(time.Duration(action.Duration)*time.Second))
+			body = fmt.Sprintf(tc.tl("Ended the video chat (%s)"), tc.formatDuration(time.Duration(action.Duration)*time.Second))
 		}
 
 		res := tc.queueRemoteEvent(&simplevent.Message[any]{
@@ -684,7 +686,7 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.Mess
 						Type: event.EventMessage,
 						Content: &event.MessageEventContent{
 							MsgType: event.MsgNotice,
-							Body:    fmt.Sprintf("Video chat scheduled for %s", start.Format("Jan 2, 15:04")),
+							Body:    fmt.Sprintf(tc.tl("Video chat scheduled for %s"), tc.formatDateTime(start)),
 						},
 					}},
 				}, nil
@@ -729,7 +731,7 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.Mess
 						Type: event.EventMessage,
 						Content: &event.MessageEventContent{
 							MsgType: event.MsgNotice,
-							Body:    "Upgraded this group to a supergroup",
+							Body:    tc.tl("Upgraded this group to a supergroup"),
 
 							BeeperActionMessage: &event.BeeperActionMessage{
 								Type: "telegram_supergroup_upgrade",
@@ -1796,6 +1798,9 @@ func (tc *TelegramClient) onPhoneCall(ctx context.Context, e tg.Entities, update
 		callType = event.BeeperActionMessageCallTypeVoice
 		body.WriteString("call")
 	}
+	translated := tc.tl(body.String())
+	body.Reset()
+	body.WriteString(translated)
 	res := tc.queueRemoteEvent(&simplevent.Message[any]{
 		EventMeta: simplevent.EventMeta{
 			Type:         bridgev2.RemoteEventMessage,
