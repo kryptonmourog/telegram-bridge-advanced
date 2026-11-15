@@ -203,6 +203,24 @@ func (fs *folderSpaceManager) foldersChangedAfter(delay time.Duration) {
 	fs.schedule(delay)
 }
 
+// folderSpacesPeriodicInterval is how often spaces are reconciled without a trigger. Rooms created
+// or re-IDed (e.g. a group upgraded to a supergroup) without an event that schedules a reconcile
+// would otherwise stay out of all spaces until something else triggered one.
+const folderSpacesPeriodicInterval = 10 * time.Minute
+
+func (fs *folderSpaceManager) periodicReconcile(ctx context.Context) {
+	ticker := time.NewTicker(folderSpacesPeriodicInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fs.schedule(0)
+		}
+	}
+}
+
 // schedule runs a reconcile after the delay. While one is pending, further calls are no-ops,
 // so a burst of events results in a single reconcile.
 func (fs *folderSpaceManager) schedule(delay time.Duration) {

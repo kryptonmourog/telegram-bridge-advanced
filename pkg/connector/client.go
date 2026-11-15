@@ -571,6 +571,7 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 			go tc.resendCapabilities(ctx)
 		}
 		tc.folderSpaces.foldersChangedAfter(folderSpacesAfterConnectDelay)
+		go tc.folderSpaces.periodicReconcile(ctx)
 		go tc.resumeChunkedBackfills(ctx)
 		if tc.adsMode() != AdsModeOn {
 			// Ads still in channel rooms from before "room" became the default.
