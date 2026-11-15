@@ -20,6 +20,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -120,6 +121,62 @@ func fnAds(ce *commands.Event) {
 	default:
 		ce.Reply("Usage: `ads` (status), `ads room`, `ads on`")
 	}
+}
+
+var cmdLeftChats = &commands.FullHandler{
+	Func: fnLeftChats,
+	Name: "left-chats",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "List rooms of chats you're no longer in on Telegram, or remove them",
+		Args:        "[`remove` <_number_ | `all`>]",
+	},
+	RequiresLogin: true,
+}
+
+func fnLeftChats(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return
+	}
+	client := login.Client.(*TelegramClient)
+	if len(ce.Args) == 0 {
+		if len(client.metadata.LeftChats) == 0 {
+			ce.Reply("No rooms of chats you've left were found. The list is updated by a full chat sync (`sync-chats`).")
+			return
+		}
+		ce.Reply("Rooms of chats you're no longer in on Telegram:\n\n%s\n\nUse `left-chats remove <number>` or `left-chats remove all`.", client.describeLeftChats(ce.Ctx))
+		return
+	}
+	if strings.ToLower(ce.Args[0]) != "remove" || len(ce.Args) < 2 {
+		ce.Reply("Usage: `left-chats` (list), `left-chats remove <number>`, `left-chats remove all`")
+		return
+	}
+	var targets []networkid.PortalID
+	if strings.ToLower(ce.Args[1]) == "all" {
+		targets = slices.Clone(client.metadata.LeftChats)
+	} else {
+		n, err := strconv.Atoi(ce.Args[1])
+		if err != nil || n < 1 || n > len(client.metadata.LeftChats) {
+			ce.Reply("There's no chat number %s in the list, see `left-chats`.", ce.Args[1])
+			return
+		}
+		targets = []networkid.PortalID{client.metadata.LeftChats[n-1]}
+	}
+	removed := 0
+	for _, portalID := range targets {
+		if err := client.removeLeftChat(ce.Ctx, portalID); err != nil {
+			ce.Reply("Failed to remove %s: %v", portalID, err)
+			continue
+		}
+		client.metadata.LeftChats = slices.DeleteFunc(client.metadata.LeftChats, func(id networkid.PortalID) bool { return id == portalID })
+		removed++
+	}
+	if err := login.Save(ce.Ctx); err != nil {
+		ce.Reply("Failed to save the list: %v", err)
+	}
+	ce.Reply("Removed %d rooms.", removed)
 }
 
 var cmdArchive = &commands.FullHandler{

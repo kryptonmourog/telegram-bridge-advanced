@@ -153,6 +153,8 @@ type TelegramClient struct {
 	adsRoom adsRoomState
 	// notifyDefaults are Telegram's default notification settings, see notifydefaults.go.
 	notifyDefaults notifyDefaults
+	// seenDialogs collects the chats of a complete chat sync, see leftchats.go.
+	seenDialogs seenDialogs
 }
 
 var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)

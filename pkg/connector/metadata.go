@@ -121,6 +121,8 @@ type UserLoginMetadata struct {
 	IsBot       bool   `json:"is_bot,omitempty"`
 	// AdsDisabled is the old form of AdsMode "off".
 	AdsDisabled bool `json:"ads_disabled,omitempty"`
+	// LeftChats are rooms of chats not in Telegram's chat list anymore, see leftchats.go.
+	LeftChats []networkid.PortalID `json:"left_chats,omitempty"`
 	// CommentThreadsRead is set once the comment threads mirrored before threads were marked read
 	// automatically have been marked read.
 	CommentThreadsRead bool `json:"comment_threads_read,omitempty"`

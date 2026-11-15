@@ -78,6 +78,13 @@ func (tc *TelegramClient) syncChats(ctx context.Context, takeoutID int64, onLogi
 
 	isFullSync := true
 	updateLimit := subtractLimit(tc.main.Config.Sync.UpdateLimit, tc.metadata.DialogSyncCount)
+	// Only a sync that goes through the whole list in this run sees every chat the user is in.
+	findLeft := tc.metadata.DialogSyncCursor == "" && updateLimit < 0 && takeoutID == 0
+	if findLeft {
+		tc.seenDialogs.start()
+	} else {
+		tc.seenDialogs.finish()
+	}
 	if onLogin && tc.main.Config.Takeout.DialogSync {
 		updateLimit = tc.main.Config.Sync.LoginLimit
 		isFullSync = false
@@ -203,6 +210,9 @@ func (tc *TelegramClient) syncChats(ctx context.Context, takeoutID int64, onLogi
 			return fmt.Errorf("failed to save user login after successful sync: %w", err)
 		}
 	}
+	if seen := tc.seenDialogs.finish(); findLeft && isFullSync && seen != nil && len(seen) > 0 {
+		tc.findLeftChats(ctx, seen)
+	}
 	log.Info().Msg("Finished dialog sync")
 	tc.folderSpaces.schedule(folderSpacesAfterChangeDelay)
 	return nil
@@ -293,6 +303,10 @@ func newDialogPage(meta tg.ModifiedMessagesDialogs) *dialogPage {
 }
 
 func (tc *TelegramClient) handleDialog(ctx context.Context, d tg.DialogClass, page *dialogPage, allowCreate bool) error {
+	switch d.(type) {
+	case *tg.Dialog, *tg.DialogCommunity:
+		tc.seenDialogs.add(tc.dialogToPortalKey(d))
+	}
 	switch dialog := d.(type) {
 	case *tg.Dialog:
 		tc.folderSpaces.noteDialogFolder(dialog)
