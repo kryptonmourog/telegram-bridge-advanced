@@ -59,19 +59,21 @@ const (
 	pollResultsDelay = 15 * time.Second
 )
 
+// A poll can be in several messages: a channel post and its copy in the discussion group share it.
 var pollSchema = []string{
-	`CREATE TABLE IF NOT EXISTS fork_poll (
+	`DROP TABLE IF EXISTS fork_poll`,
+	`CREATE TABLE IF NOT EXISTS fork_poll_message (
 		login_id   TEXT   NOT NULL,
-		poll_id    BIGINT NOT NULL,
 		portal_id  TEXT   NOT NULL,
 		receiver   TEXT   NOT NULL,
 		msg_id     BIGINT NOT NULL,
+		poll_id    BIGINT NOT NULL,
 		poll       TEXT   NOT NULL,
 		answer_map TEXT   NOT NULL DEFAULT '',
 		own_vote   TEXT   NOT NULL DEFAULT '',
-		PRIMARY KEY (login_id, poll_id)
+		PRIMARY KEY (login_id, portal_id, receiver, msg_id)
 	)`,
-	`CREATE INDEX IF NOT EXISTS fork_poll_msg_idx ON fork_poll (login_id, portal_id, receiver, msg_id)`,
+	`CREATE INDEX IF NOT EXISTS fork_poll_message_poll_idx ON fork_poll_message (login_id, poll_id)`,
 }
 
 func (tc *TelegramConnector) createPollTables(ctx context.Context) error {
@@ -141,17 +143,17 @@ func (tc *TelegramClient) savePoll(ctx context.Context, row *pollRow) error {
 		answerMap = string(data)
 	}
 	_, err = tc.main.Store.Exec(ctx, `
-		INSERT INTO fork_poll (login_id, poll_id, portal_id, receiver, msg_id, poll, answer_map, own_vote)
+		INSERT INTO fork_poll_message (login_id, poll_id, portal_id, receiver, msg_id, poll, answer_map, own_vote)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (login_id, poll_id) DO UPDATE SET
-			portal_id=excluded.portal_id, receiver=excluded.receiver, msg_id=excluded.msg_id, poll=excluded.poll,
-			answer_map=CASE WHEN excluded.answer_map <> '' THEN excluded.answer_map ELSE fork_poll.answer_map END`,
+		ON CONFLICT (login_id, portal_id, receiver, msg_id) DO UPDATE SET
+			poll_id=excluded.poll_id, poll=excluded.poll,
+			answer_map=CASE WHEN excluded.answer_map <> '' THEN excluded.answer_map ELSE fork_poll_message.answer_map END`,
 		tc.userLogin.ID, row.PollID, row.PortalKey.ID, row.PortalKey.Receiver, row.MsgID, string(pollJSON), answerMap, row.OwnVote)
 	return err
 }
 
 func (tc *TelegramClient) setPollOwnVote(ctx context.Context, pollID int64, vote string) error {
-	_, err := tc.main.Store.Exec(ctx, `UPDATE fork_poll SET own_vote=$3 WHERE login_id=$1 AND poll_id=$2`,
+	_, err := tc.main.Store.Exec(ctx, `UPDATE fork_poll_message SET own_vote=$3 WHERE login_id=$1 AND poll_id=$2`,
 		tc.userLogin.ID, pollID, vote)
 	return err
 }
@@ -179,21 +181,40 @@ func (tc *TelegramClient) scanPoll(row interface{ Scan(...any) error }) (*pollRo
 
 const pollColumns = `poll_id, portal_id, receiver, msg_id, poll, answer_map, own_vote`
 
-func (tc *TelegramClient) getPollByID(ctx context.Context, pollID int64) (*pollRow, error) {
-	return tc.scanPoll(tc.main.Store.QueryRow(ctx,
-		`SELECT `+pollColumns+` FROM fork_poll WHERE login_id=$1 AND poll_id=$2`, tc.userLogin.ID, pollID))
+// getPollMessages returns the messages that have the poll.
+func (tc *TelegramClient) getPollMessages(ctx context.Context, pollID int64) ([]*pollRow, error) {
+	rows, err := tc.main.Store.Query(ctx,
+		`SELECT `+pollColumns+` FROM fork_poll_message WHERE login_id=$1 AND poll_id=$2`, tc.userLogin.ID, pollID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var polls []*pollRow
+	for rows.Next() {
+		p, err := tc.scanPoll(rows)
+		if err != nil {
+			return nil, err
+		}
+		polls = append(polls, p)
+	}
+	return polls, rows.Err()
 }
 
 func (tc *TelegramClient) getPollByMessage(ctx context.Context, portalKey networkid.PortalKey, msgID int) (*pollRow, error) {
 	return tc.scanPoll(tc.main.Store.QueryRow(ctx,
-		`SELECT `+pollColumns+` FROM fork_poll WHERE login_id=$1 AND portal_id=$2 AND receiver=$3 AND msg_id=$4`,
+		`SELECT `+pollColumns+` FROM fork_poll_message WHERE login_id=$1 AND portal_id=$2 AND receiver=$3 AND msg_id=$4`,
 		tc.userLogin.ID, portalKey.ID, portalKey.Receiver, msgID))
 }
 
 // pollState batches result updates per poll.
 type pollState struct {
 	lock    sync.Mutex
-	pending map[int64]*pendingPollResults
+	pending map[pollMessageKey]*pendingPollResults
+}
+
+type pollMessageKey struct {
+	portal networkid.PortalKey
+	msgID  int
 }
 
 type pendingPollResults struct {
@@ -255,17 +276,30 @@ func (tc *TelegramClient) pollResultsPart(media *tg.MessageMediaPoll) *bridgev2.
 	return &bridgev2.ConvertedMessagePart{
 		ID:         pollResultsPartID,
 		Type:       event.EventMessage,
-		Content:    tc.pollResultsContent(storePoll(&media.Poll), &media.Results),
+		Content:    tc.pollResultsContent(storePoll(&media.Poll), &media.Results, ""),
 		DBMetadata: &MessageMetadata{},
 	}
 }
 
-// pollResultsContent renders Telegram's results of a poll as a notice.
-func (tc *TelegramClient) pollResultsContent(poll storedPoll, results *tg.PollResults) *event.MessageEventContent {
+// pollResultsContent renders Telegram's results of a poll as a notice. ownVote is the user's known
+// vote, used when the results are "min" (without the user's choices).
+func (tc *TelegramClient) pollResultsContent(poll storedPoll, results *tg.PollResults, ownVote string) *event.MessageEventContent {
 	voters := map[string]tg.PollAnswerVoters{}
+	chosen := map[string]bool{}
 	for _, r := range results.Results {
-		voters[encodePollOption(r.Option)] = r
+		option := encodePollOption(r.Option)
+		voters[option] = r
+		if r.Chosen {
+			chosen[option] = true
+		}
 	}
+	if results.Min && ownVote != "" {
+		for _, option := range strings.Split(ownVote, ",") {
+			chosen[option] = true
+		}
+	}
+	// Like Telegram, a quiz reveals its answer only to those who answered, or once it's closed.
+	revealAnswer := !poll.Quiz || poll.Closed || len(chosen) > 0
 	var sb strings.Builder
 	if poll.Quiz {
 		sb.WriteString(tc.tl("📊 Quiz results in Telegram"))
@@ -283,10 +317,10 @@ func (tc *TelegramClient) pollResultsContent(poll storedPoll, results *tg.PollRe
 		if known && results.TotalVoters > 0 {
 			fmt.Fprintf(&sb, " — %d%% (%d)", (v.Voters*100+results.TotalVoters/2)/results.TotalVoters, v.Voters)
 		}
-		if v.Correct {
+		if v.Correct && revealAnswer {
 			sb.WriteString(" ✅")
 		}
-		if v.Chosen {
+		if chosen[a.Option] {
 			sb.WriteString(tc.tl(" ← your vote"))
 		}
 	}
@@ -294,7 +328,7 @@ func (tc *TelegramClient) pollResultsContent(poll storedPoll, results *tg.PollRe
 		sb.WriteString("\n")
 		sb.WriteString(tc.tl("Telegram shows the results after you vote."))
 	}
-	if results.Solution != "" {
+	if results.Solution != "" && revealAnswer {
 		sb.WriteString("\n💡 ")
 		sb.WriteString(results.Solution)
 	}
@@ -311,20 +345,24 @@ func (tc *TelegramClient) onMessagePoll(ctx context.Context, update *tg.UpdateMe
 	return nil
 }
 
-// handlePollResults bridges the user's own vote right away and schedules an edit of the results.
+// handlePollResults bridges the user's own vote right away and schedules edits of the results.
 func (tc *TelegramClient) handlePollResults(ctx context.Context, pollID int64, poll *tg.Poll, results tg.PollResults) {
 	log := zerolog.Ctx(ctx).With().Int64("poll_id", pollID).Logger()
-	row, err := tc.getPollByID(ctx, pollID)
+	rows, err := tc.getPollMessages(ctx, pollID)
 	if err != nil {
 		log.Err(err).Msg("Failed to get poll")
 		return
-	} else if row == nil {
+	} else if len(rows) == 0 {
+		log.Info().Msg("Results of an unknown poll")
 		return
 	}
+	log.Info().Int("messages", len(rows)).Bool("min", results.Min).Int("total_voters", results.TotalVoters).Msg("Poll results changed")
 	if poll != nil {
-		row.Poll = storePoll(poll)
-		if err = tc.savePoll(ctx, row); err != nil {
-			log.Err(err).Msg("Failed to save poll")
+		for _, row := range rows {
+			row.Poll = storePoll(poll)
+			if err = tc.savePoll(ctx, row); err != nil {
+				log.Err(err).Msg("Failed to save poll")
+			}
 		}
 	}
 	if !results.Min {
@@ -335,42 +373,53 @@ func (tc *TelegramClient) handlePollResults(ctx context.Context, pollID int64, p
 			}
 		}
 		slices.Sort(chosen)
-		if vote := strings.Join(chosen, ","); vote != row.OwnVote {
+		vote := strings.Join(chosen, ",")
+		changed := false
+		for _, row := range rows {
+			if row.OwnVote != vote {
+				changed = true
+				go tc.sendOwnPollVote(context.WithoutCancel(ctx), row, chosen)
+			}
+		}
+		if changed {
 			if err = tc.setPollOwnVote(ctx, pollID, vote); err != nil {
 				log.Err(err).Msg("Failed to save own poll vote")
 			}
-			go tc.sendOwnPollVote(context.WithoutCancel(ctx), row, chosen)
 		}
 	}
 
 	tc.polls.lock.Lock()
 	defer tc.polls.lock.Unlock()
 	if tc.polls.pending == nil {
-		tc.polls.pending = map[int64]*pendingPollResults{}
+		tc.polls.pending = map[pollMessageKey]*pendingPollResults{}
 	}
-	if pending, ok := tc.polls.pending[pollID]; ok {
-		pending.results = results
-		return
-	}
-	tc.polls.pending[pollID] = &pendingPollResults{results: results}
-	time.AfterFunc(pollResultsDelay, func() {
-		tc.polls.lock.Lock()
-		pending := tc.polls.pending[pollID]
-		delete(tc.polls.pending, pollID)
-		tc.polls.lock.Unlock()
-		if pending != nil {
-			tc.editPollResults(log.WithContext(context.Background()), pollID, pending.results)
+	for _, row := range rows {
+		key := pollMessageKey{portal: row.PortalKey, msgID: row.MsgID}
+		if pending, ok := tc.polls.pending[key]; ok {
+			pending.results = results
+			continue
 		}
-	})
+		tc.polls.pending[key] = &pendingPollResults{results: results}
+		time.AfterFunc(pollResultsDelay, func() {
+			tc.polls.lock.Lock()
+			pending := tc.polls.pending[key]
+			delete(tc.polls.pending, key)
+			tc.polls.lock.Unlock()
+			if pending != nil {
+				tc.editPollResults(log.WithContext(context.Background()), key, pending.results)
+			}
+		})
+	}
 }
 
 // editPollResults edits the results notice of a poll.
-func (tc *TelegramClient) editPollResults(ctx context.Context, pollID int64, results tg.PollResults) {
+func (tc *TelegramClient) editPollResults(ctx context.Context, key pollMessageKey, results tg.PollResults) {
 	log := zerolog.Ctx(ctx)
-	row, err := tc.getPollByID(ctx, pollID)
+	row, err := tc.getPollByMessage(ctx, key.portal, key.msgID)
 	if err != nil || row == nil {
 		return
 	}
+	pollID := row.PollID
 	messageID := ids.MakeMessageID(row.PortalKey, row.MsgID)
 	part, err := tc.main.Bridge.DB.Message.GetPartByID(ctx, row.PortalKey.Receiver, messageID, pollResultsPartID)
 	if err != nil {
@@ -380,7 +429,7 @@ func (tc *TelegramClient) editPollResults(ctx context.Context, pollID int64, res
 		// Polls bridged before results were bridged, or created in Matrix before the notice was sent.
 		return
 	}
-	content := tc.pollResultsContent(row.Poll, &results)
+	content := tc.pollResultsContent(row.Poll, &results, row.OwnVote)
 	sender := bridgev2.EventSender{Sender: part.SenderID}
 	if part.SenderID == tc.userID {
 		sender.IsFromMe = true
@@ -442,7 +491,7 @@ func (tc *TelegramClient) sendOwnPollVote(ctx context.Context, row *pollRow, opt
 	if err != nil {
 		log.Err(err).Msg("Failed to send own poll vote to Matrix")
 	} else {
-		log.Debug().Strs("answers", answers).Msg("Bridged own poll vote to Matrix")
+		log.Info().Strs("answers", answers).Msg("Bridged own poll vote to Matrix")
 	}
 }
 
@@ -513,6 +562,12 @@ func (tc *TelegramClient) HandleMatrixPollVote(ctx context.Context, msg *bridgev
 	updates, err := tc.client.API().MessagesSendVote(ctx, &tg.MessagesSendVoteRequest{Peer: peer, MsgID: msgID, Options: options})
 	if err != nil {
 		_ = tc.setPollOwnVote(ctx, row.PollID, row.OwnVote)
+		// Put the vote that's still valid in Telegram back on the Matrix poll.
+		var previous []string
+		if row.OwnVote != "" {
+			previous = strings.Split(row.OwnVote, ",")
+		}
+		go tc.sendOwnPollVote(context.WithoutCancel(ctx), row, previous)
 		return nil, tc.humaniseSendError(err)
 	}
 	tc.handlePollUpdates(ctx, updates)
@@ -633,7 +688,7 @@ func (tc *TelegramClient) sendOwnPollResults(ctx context.Context, portal *bridge
 	if dp == nil {
 		return
 	}
-	content := tc.pollResultsContent(row.Poll, results)
+	content := tc.pollResultsContent(row.Poll, results, row.OwnVote)
 	content.RelatesTo = (&event.RelatesTo{}).SetReplyTo(start.MXID)
 	resp, err := dp.SendMessage(ctx, portal.MXID, event.EventMessage, &event.Content{Parsed: content}, &bridgev2.MatrixSendExtra{Timestamp: time.Now()})
 	if err != nil {

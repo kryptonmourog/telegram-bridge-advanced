@@ -684,4 +684,5 @@ var ruTranslations = map[string]string{
 	" ← your vote":                        " ← ваш голос",
 	"Telegram shows the results after you vote.": "Telegram покажет итоги после вашего голоса.",
 	"a poll needs at least two answers":          "в опросе нужно минимум два варианта",
+	"You cannot change your vote":                "Переголосовать нельзя",
 }
