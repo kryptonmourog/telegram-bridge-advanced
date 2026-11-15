@@ -139,7 +139,7 @@ func fnSettings(ce *commands.Event) {
 		default:
 			mb, err := strconv.Atoi(value)
 			if err != nil || mb <= 0 {
-				ce.Reply("Usage: `settings media all`, `settings media none` or `settings media <MB>`")
+				ce.Reply("Usage: `$cmdprefix settings media all`, `$cmdprefix settings media none` or `$cmdprefix settings media <MB>`")
 				return
 			}
 			settings.MediaLimitMB = mb
@@ -167,7 +167,7 @@ func fnSettings(ce *commands.Event) {
 		}
 		settings.NoButtons = !on
 	default:
-		ce.Reply("Unknown setting `%s`, see `settings`.", name)
+		ce.Reply("Unknown setting `%s`, see `$cmdprefix settings`.", name)
 		return
 	}
 	meta := ce.Portal.Metadata.(*PortalMetadata)
@@ -208,15 +208,21 @@ func (tc *TelegramClient) describeRoomSettings(ce *commands.Event, s RoomSetting
 	if s.Paused {
 		pause = ce.T("paused")
 	}
+	lines := []string{
+		fmt.Sprintf(ce.T("Media: **%s** — `$cmdprefix settings media all|none|<MB>`"), media),
+		fmt.Sprintf(ce.T("New messages: **%s** — `$cmdprefix settings pause on|off`"), pause),
+	}
+	if isChannel {
+		lines = append(lines, fmt.Sprintf(ce.T("Author signatures: **%s** — `$cmdprefix settings signatures on|off`"), onOff(!s.NoSignatures)))
+	}
+	lines = append(lines, fmt.Sprintf(ce.T("Bot buttons: **%s** — `$cmdprefix settings buttons on|off`"), onOff(!s.NoButtons)))
 	var sb strings.Builder
 	sb.WriteString(ce.T("Settings of this room:"))
-	fmt.Fprintf(&sb, "\n\n"+ce.T("1. Media: **%s** — `settings media all|none|<MB>`"), media)
-	fmt.Fprintf(&sb, "\n"+ce.T("2. New messages: **%s** — `settings pause on|off`"), pause)
-	if isChannel {
-		fmt.Fprintf(&sb, "\n"+ce.T("3. Author signatures: **%s** — `settings signatures on|off`"), onOff(!s.NoSignatures))
+	sb.WriteString("\n")
+	for i, line := range lines {
+		fmt.Fprintf(&sb, "\n%d. %s", i+1, line)
 	}
-	fmt.Fprintf(&sb, "\n"+ce.T("4. Bot buttons: **%s** — `settings buttons on|off`"), onOff(!s.NoButtons))
 	sb.WriteString("\n\n")
 	sb.WriteString(ce.T("Settings apply to new messages."))
-	return sb.String()
+	return strings.ReplaceAll(sb.String(), "$cmdprefix", ce.Bridge.Config.CommandPrefix)
 }
