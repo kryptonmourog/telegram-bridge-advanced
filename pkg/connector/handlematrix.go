@@ -936,10 +936,11 @@ func (tc *TelegramClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.Ma
 func (tc *TelegramClient) HandleMatrixMessageRemove(ctx context.Context, msg *bridgev2.MatrixMessageRemove) error {
 	if msg.Portal.RoomType == database.RoomTypeSpace {
 		return errSpacePortal
+	} else if part := msg.TargetMessage.PartID; part == pollResultsPartID || strings.HasPrefix(string(part), pollVotePartPrefix) {
+		// Removing a poll vote or the results notice in Matrix must not delete the poll.
+		return nil
 	} else if dbMsg, err := tc.main.Bridge.DB.Message.GetPartByMXID(ctx, msg.TargetMessage.MXID); err != nil {
 		return err
-	} else if strings.HasPrefix(string(dbMsg.PartID), pollVotePartPrefix) {
-		return fmt.Errorf("%w: poll votes can't be deleted", bridgev2.ErrUnsupportedMessageType)
 	} else if _, messageID, err := ids.ParseMessageID(dbMsg.ID); err != nil {
 		return err
 	} else if peer, _, err := tc.inputPeerForPortalID(ctx, msg.Portal.ID); err != nil {

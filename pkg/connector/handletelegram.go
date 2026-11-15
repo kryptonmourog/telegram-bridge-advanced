@@ -1131,6 +1131,8 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 		return tc.onMessageEdit(ctx, update)
 	case *tg.UpdateMessageReactions:
 		return tc.onMessageReactions(ctx, update)
+	case *tg.UpdateMessagePoll:
+		return tc.onMessagePoll(ctx, update)
 	case *tg.UpdateBotMessageReaction:
 		return tc.onBotMessageReaction(ctx, update)
 	case *tg.UpdateUserTyping:
@@ -1267,6 +1269,11 @@ func (tc *TelegramClient) onMessageEdit(ctx context.Context, update IGetMessage)
 		return nil
 	}
 
+	if poll, ok := msg.Media.(*tg.MessageMediaPoll); ok {
+		// Edits of polls carry new results, the poll itself can't be edited.
+		tc.handlePollResults(ctx, poll.Poll.ID, &poll.Poll, poll.Results)
+		return nil
+	}
 	topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
 	// Channels don't use edits to signal reactions, and when sending the first reaction they send a no-op edit
 	// with an empty reactions list, which would confuse the handle method. Therefore, just don't sync reactions

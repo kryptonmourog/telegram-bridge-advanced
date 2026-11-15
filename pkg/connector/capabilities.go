@@ -228,7 +228,7 @@ func viewLimitedFileCaps(base event.FileFeatureMap) event.FileFeatureMap {
 var telegramTimers = makeTimerList()
 
 func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
-	baseID := "fi.mau.telegram.capabilities.2026_10_29"
+	baseID := "fi.mau.telegram.capabilities.2026_11_15"
 	feat := &event.RoomFeatures{
 		Formatting:          formattingCaps,
 		File:                fileCaps,
@@ -245,7 +245,6 @@ func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.
 		Poll:                event.CapLevelFullySupported,
 		PollMaxOptions:      12,
 		PollOptionMaxLength: 100,
-		PollResultsAPI:      true,
 
 		DisappearingTimer: &event.DisappearingTimerCapability{
 			Types:  []event.DisappearingType{event.DisappearingTypeAfterSend},

@@ -110,7 +110,11 @@ func (tc *TelegramClient) mediaToMatrix(
 	case tg.MessageMediaGeoTypeID, tg.MessageMediaGeoLiveTypeID, tg.MessageMediaVenueTypeID:
 		return convertLocation(media, tc.tl), nil, nil
 	case tg.MessageMediaPollTypeID:
-		return tc.convertPoll(ctx, media), nil, nil
+		poll := media.(*tg.MessageMediaPoll)
+		if !tc.main.Config.ExtEvPolls || tc.metadata.IsBot {
+			return tc.convertPoll(ctx, media), nil, nil
+		}
+		return tc.convertPollToMatrix(ctx, portal, msg, poll), nil, pollHashID(poll)
 	case tg.MessageMediaDiceTypeID:
 		return convertDice(media, tc.tl), nil, nil
 	case tg.MessageMediaGameTypeID:
@@ -313,6 +317,9 @@ func (tc *TelegramClient) convertToMatrix(
 		for i, part := range cm.Parts[1:] {
 			part.ID = networkid.PartID(strconv.Itoa(i + 1))
 		}
+	}
+	if poll, ok := msg.Media.(*tg.MessageMediaPoll); ok {
+		cm.Parts = append(cm.Parts, tc.pollResultsPart(poll))
 	}
 
 	if ttl, ok := msg.GetTTLPeriod(); ok && disappearingSetting == nil {

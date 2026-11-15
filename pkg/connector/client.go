@@ -135,6 +135,7 @@ type TelegramClient struct {
 
 	prevReactionPoll     map[networkid.PortalKey]time.Time
 	prevReactionPollLock sync.Mutex
+	polls                pollState
 
 	stickerPacksByName   map[string]*stickerPackCache
 	stickerPacksByID     map[int64]*stickerPackCache

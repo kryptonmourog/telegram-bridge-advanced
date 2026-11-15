@@ -57,6 +57,9 @@ func (tc *TelegramConnector) Start(ctx context.Context) error {
 	}
 	tc.registerAdsRoomReceipts()
 	tc.installTranslator()
+	if err := tc.createPollTables(ctx); err != nil {
+		return err
+	}
 	return tc.createCommentTables(ctx)
 }
 
