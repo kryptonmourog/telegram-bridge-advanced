@@ -370,6 +370,20 @@ func (tc *TelegramClient) mirrorSentByCommenter(ctx context.Context, mirror *com
 	return err == nil && commenter != nil && evt.Sender == commenter.Intent.GetMXID()
 }
 
+// readCommentThread marks a comment thread read for the user. Like in Telegram, comments under
+// other people's posts don't ask for attention unless the user takes part in the discussion;
+// otherwise every channel with new comments lit up in the client's thread activity.
+func (tc *TelegramClient) readCommentThread(ctx context.Context, room id.RoomID, threadRoot, eventID id.EventID) {
+	dp, ok := tc.userLogin.User.DoublePuppet(ctx).(*matrix.ASIntent)
+	if !ok || dp == nil {
+		return
+	}
+	err := dp.Matrix.SendReceipt(ctx, room, eventID, event.ReceiptTypeRead, map[string]any{"thread_id": threadRoot})
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to mark comment thread read")
+	}
+}
+
 // mirrorComment sends a comment to the channel room as a thread message under its post.
 func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg *tg.Message) error {
 	rootID := commentRootID(msg)
@@ -418,7 +432,7 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 			replyTo, isFallback = target.EventID, false
 		}
 	}
-	var firstEvent id.EventID
+	var firstEvent, lastEvent id.EventID
 	for i, part := range converted.Parts {
 		content := part.Content
 		// The ghost sends the comment itself, the channel's "Name: " signature isn't needed.
@@ -441,9 +455,17 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 		if i == 0 {
 			firstEvent = resp.EventID
 		}
+		lastEvent = resp.EventID
 	}
 	if firstEvent == "" {
 		return nil
+	}
+	if sender.IsFromMe {
+		if err = tc.markCommentParticipation(ctx, groupID, rootID); err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment thread participation")
+		}
+	} else if !tc.isParticipatingInComments(ctx, groupID, rootID) {
+		tc.readCommentThread(ctx, portal.MXID, post.MXID, lastEvent)
 	}
 	if editDate, ok := msg.GetEditDate(); ok {
 		// Mirrored with this edit already applied.
@@ -716,9 +738,37 @@ func (tc *TelegramClient) maybePollComments(ctx context.Context, portal *bridgev
 	}
 }
 
+// readExistingCommentThreads marks every comment thread mirrored so far read, once. Participation
+// wasn't recorded before, so all of them count as threads the user isn't in.
+func (tc *TelegramClient) readExistingCommentThreads(ctx context.Context) {
+	if tc.metadata.CommentThreadsRead {
+		return
+	}
+	threads, err := tc.latestCommentPerThread(ctx)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to list comment threads to mark read")
+		return
+	}
+	for _, t := range threads {
+		room, channelID, postID, eventID := t[0].(id.RoomID), t[1].(int64), t[2].(int), t[3].(id.EventID)
+		receiver := tc.makePortalKeyFromID(ids.PeerTypeChannel, channelID, 0).Receiver
+		post, err := tc.main.Bridge.DB.Message.GetFirstPartByID(ctx, receiver, ids.MakeMessageID(&tg.PeerChannel{ChannelID: channelID}, postID))
+		if err != nil || post == nil || post.MXID == "" {
+			continue
+		}
+		tc.readCommentThread(ctx, room, post.MXID, eventID)
+	}
+	tc.metadata.CommentThreadsRead = true
+	if err = tc.userLogin.Save(ctx); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to save login after marking comment threads read")
+	}
+	zerolog.Ctx(ctx).Info().Int("threads", len(threads)).Msg("Marked existing comment threads read")
+}
+
 // syncExistingComments fetches the comments of channel rooms bridged before comments were mirrored,
 // once per room.
 func (tc *TelegramClient) syncExistingComments(ctx context.Context) {
+	tc.readExistingCommentThreads(ctx)
 	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get portals to sync comments")
@@ -815,6 +865,9 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 	})
 	if err != nil {
 		return true, fmt.Errorf("failed to send comment: %w", err)
+	}
+	if err = tc.markCommentParticipation(ctx, thread.GroupID, thread.CopyID); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment thread participation")
 	}
 	if newID := sentMessageID(updates); newID != 0 {
 		if err = tc.saveCommentMirror(ctx, commentMirror{

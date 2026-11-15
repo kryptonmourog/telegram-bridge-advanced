@@ -46,6 +46,12 @@ var commentSchema = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS fork_comment_mirror_event_idx ON fork_comment_mirror (event_id)`,
 	`CREATE INDEX IF NOT EXISTS fork_comment_mirror_thread_idx ON fork_comment_mirror (group_id, copy_id)`,
+	// Comment threads the user takes part in (commented in); others are marked read automatically.
+	`CREATE TABLE IF NOT EXISTS fork_comment_participation (
+		group_id BIGINT NOT NULL,
+		copy_id  BIGINT NOT NULL,
+		PRIMARY KEY (group_id, copy_id)
+	)`,
 	// Last edit of each mirrored comment that's in Matrix, to notice edits found by polling.
 	`CREATE TABLE IF NOT EXISTS fork_comment_edit (
 		group_id  BIGINT NOT NULL,
@@ -170,4 +176,37 @@ func (tc *TelegramClient) saveCommentEditDate(ctx context.Context, groupID int64
 		INSERT INTO fork_comment_edit (group_id, msg_id, edit_date) VALUES ($1, $2, $3)
 		ON CONFLICT (group_id, msg_id) DO UPDATE SET edit_date=excluded.edit_date`, groupID, msgID, editDate)
 	return err
+}
+
+func (tc *TelegramClient) markCommentParticipation(ctx context.Context, groupID int64, copyID int) error {
+	_, err := tc.main.Store.Exec(ctx, `INSERT INTO fork_comment_participation (group_id, copy_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, groupID, copyID)
+	return err
+}
+
+func (tc *TelegramClient) isParticipatingInComments(ctx context.Context, groupID int64, copyID int) bool {
+	var one int
+	err := tc.main.Store.QueryRow(ctx, `SELECT 1 FROM fork_comment_participation WHERE group_id=$1 AND copy_id=$2`, groupID, copyID).Scan(&one)
+	return err == nil
+}
+
+// latestCommentPerThread returns, for every comment thread, its room, post and newest comment event.
+func (tc *TelegramClient) latestCommentPerThread(ctx context.Context) (out [][4]any, err error) {
+	rows, err := tc.main.Store.Query(ctx, `
+		SELECT m.room_id, t.channel_id, t.post_id, m.event_id
+		FROM fork_comment_mirror m JOIN fork_comment_thread t ON t.group_id=m.group_id AND t.copy_id=m.copy_id
+		WHERE m.msg_id = (SELECT MAX(m2.msg_id) FROM fork_comment_mirror m2 WHERE m2.group_id=m.group_id AND m2.copy_id=m.copy_id)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var room, eventID string
+		var channelID int64
+		var postID int
+		if err = rows.Scan(&room, &channelID, &postID, &eventID); err != nil {
+			return nil, err
+		}
+		out = append(out, [4]any{id.RoomID(room), channelID, postID, id.EventID(eventID)})
+	}
+	return out, rows.Err()
 }

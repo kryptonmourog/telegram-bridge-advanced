@@ -121,6 +121,9 @@ type UserLoginMetadata struct {
 	IsBot       bool   `json:"is_bot,omitempty"`
 	// AdsDisabled is the old form of AdsMode "off".
 	AdsDisabled bool `json:"ads_disabled,omitempty"`
+	// CommentThreadsRead is set once the comment threads mirrored before threads were marked read
+	// automatically have been marked read.
+	CommentThreadsRead bool `json:"comment_threads_read,omitempty"`
 	// AdsMode is how sponsored messages are shown, see adsroom.go. Empty means "room".
 	AdsMode string `json:"ads_mode,omitempty"`
 	// AdsRoom is the room sponsored messages go to in "room" mode.
