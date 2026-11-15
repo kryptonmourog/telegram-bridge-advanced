@@ -158,3 +158,17 @@ func (tc *TelegramClient) muteForPortalUpdate(ctx context.Context, key networkid
 	}
 	return tc.effectiveMute(settings, kind)
 }
+
+// topicMute is when a forum topic is muted until: its own setting, else the forum's own setting,
+// else the default for groups. Topic rooms had no mute at all, so every topic notified in Matrix.
+func (tc *TelegramClient) topicMute(ctx context.Context, forum tg.InputPeerClass, topicSettings tg.PeerNotifySettings) *time.Time {
+	if until, ok := muteUntilFromSettings(topicSettings); ok {
+		return &until
+	}
+	forumSettings, err := tc.client.API().AccountGetNotifySettings(ctx, &tg.InputNotifyPeer{Peer: forum})
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to get notification settings of forum")
+		return tc.effectiveMute(tg.PeerNotifySettings{}, notifyChats)
+	}
+	return tc.effectiveMute(*forumSettings, notifyChats)
+}
