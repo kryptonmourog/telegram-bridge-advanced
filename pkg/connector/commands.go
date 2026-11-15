@@ -95,7 +95,7 @@ func fnAds(ce *commands.Event) {
 	}
 	switch sub {
 	case "":
-		ce.Reply("Sponsored messages: %s.\nModes: `ads room` (default), `ads on`.", describe[client.adsMode()])
+		ce.Reply("Sponsored messages: %s.\nModes: `ads room` (default), `ads on`.", ce.T(describe[client.adsMode()]))
 	// AdsModeOff stays supported in the code, but isn't offered: with the user's own api_id, not
 	// requesting ads at all is what Telegram's API terms forbid.
 	case AdsModeRoom, AdsModeOn:
@@ -117,7 +117,7 @@ func fnAds(ce *commands.Event) {
 			ce.Reply("Saved, but removing shown ads failed after %d: %v", removed, err)
 			return
 		}
-		ce.Reply("Sponsored messages: %s. Removed %d shown ads.", describe[sub], removed)
+		ce.Reply("Sponsored messages: %s. Removed %d shown ads.", ce.T(describe[sub]), removed)
 	default:
 		ce.Reply("Usage: `ads` (status), `ads room`, `ads on`")
 	}
@@ -216,7 +216,7 @@ func fnArchive(ce *commands.Event) {
 		if meta := client.metadata.FolderSpaces; meta != nil {
 			count = len(meta.Archived)
 		}
-		ce.Reply("Archive is %s.\nArchived chats: %d. Use `archive on` or `archive off` to change it.", state, count)
+		ce.Reply("Archive is %s.\nArchived chats: %d. Use `archive on` or `archive off` to change it.", ce.T(state), count)
 	case "on":
 		ce.Reply("Bridging archived chats, this may take a while...")
 		created, err := fs.SetArchive(ce.Ctx, true)
@@ -234,6 +234,41 @@ func fnArchive(ce *commands.Event) {
 	default:
 		ce.Reply("Usage: `archive` (status), `archive on`, `archive off`")
 	}
+}
+
+var cmdLang = &commands.FullHandler{
+	Func: fnLang,
+	Name: "lang",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionGeneral,
+		Description: "Show or change the language of the bridge's replies and space names",
+		Args:        "[_code_]",
+	},
+	RequiresLogin: true,
+}
+
+func fnLang(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return
+	}
+	client := login.Client.(*TelegramClient)
+	supported := strings.Join(supportedFolderSpaceLanguages(), ", ")
+	if len(ce.Args) == 0 {
+		ce.Reply("Language: `%s` (supported: %s). Change it with `lang <code>`.", client.folderSpaces.language(), supported)
+		return
+	}
+	lang := strings.ToLower(ce.Args[0])
+	if !isSupportedFolderSpaceLanguage(lang) {
+		ce.Reply("Unsupported language `%s`, supported: %s", lang, supported)
+		return
+	}
+	if err := client.folderSpaces.SetLanguage(ce.Ctx, lang); err != nil {
+		ce.Reply("Failed to save language: %v", err)
+		return
+	}
+	ce.Reply("Language set to `%s`.", lang)
 }
 
 var cmdFolders = &commands.FullHandler{

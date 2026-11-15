@@ -45,7 +45,7 @@ var _ bridgev2.MaxFileSizeingNetwork = (*TelegramConnector)(nil)
 func (tc *TelegramConnector) Init(bridge *bridgev2.Bridge) {
 	tc.Store = store.NewStore(bridge.DB.Database, dbutil.ZeroLogger(bridge.Log.With().Str("db_section", "telegram").Logger()))
 	tc.Bridge = bridge
-	tc.Bridge.Commands.(*commands.Processor).AddHandlers(cmdSyncChats, cmdEmojiPack, cmdUpgrade, cmdJoin, cmdFolders, cmdArchive, cmdAds, cmdLeftChats)
+	tc.Bridge.Commands.(*commands.Processor).AddHandlers(cmdSyncChats, cmdEmojiPack, cmdUpgrade, cmdJoin, cmdFolders, cmdArchive, cmdAds, cmdLeftChats, cmdLang)
 }
 
 func (tc *TelegramConnector) Start(ctx context.Context) error {
@@ -56,6 +56,7 @@ func (tc *TelegramConnector) Start(ctx context.Context) error {
 		return err
 	}
 	tc.registerAdsRoomReceipts()
+	tc.installTranslator()
 	return tc.createCommentTables(ctx)
 }
 

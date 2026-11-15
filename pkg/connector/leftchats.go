@@ -105,9 +105,9 @@ func (tc *TelegramClient) findLeftChats(ctx context.Context, seen map[networkid.
 	}
 	log.Info().Int("left_chats", len(left)).Int("new", newOnes).Msg("Compared rooms with Telegram's chat list")
 	if newOnes > 0 {
-		tc.sendManagementNotice(ctx, fmt.Sprintf(
+		tc.sendManagementNotice(ctx, fmt.Sprintf(tc.t(ctx,
 			"Found %d chats that have a room in Matrix but that you're no longer in on Telegram "+
-				"(probably left while the bridge was offline).\n\n%s\n\nUse `left-chats remove <number>` or `left-chats remove all` to remove their rooms.",
+				"(probably left while the bridge was offline).\n\n%s\n\nUse `left-chats remove <number>` or `left-chats remove all` to remove their rooms."),
 			len(left), tc.describeLeftChats(ctx)))
 	}
 }
