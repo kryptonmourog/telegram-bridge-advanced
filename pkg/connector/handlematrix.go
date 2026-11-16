@@ -913,6 +913,14 @@ func (tc *TelegramClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.Ma
 						Msg("Multiple messages in edit response")
 				}
 				realSentMessage = newMessage
+			case *tg.UpdateEditMessage:
+				if editedMessage, ok := update.Message.(*tg.Message); ok {
+					realSentMessage = editedMessage
+				}
+			case *tg.UpdateEditChannelMessage:
+				if editedMessage, ok := update.Message.(*tg.Message); ok {
+					realSentMessage = editedMessage
+				}
 			default:
 				log.Warn().Type("update_type", update).Msg("Unexpected update type in edit message response")
 			}
