@@ -139,6 +139,11 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	if err != nil {
 		return nil, err
 	}
+	// The rest of a chunked backfill comes as a catch-up resync, which bridgev2 limits to
+	// max_catchup_messages. Telegram returns the newest messages above the anchor, so a limit lower
+	// than what's left would leave a hole between the chunks. Allow as many as the initial backfill.
+	continuingChunks := fetchParams.Forward && fetchParams.AnchorMessage != nil &&
+		fetchParams.Portal.Metadata.(*PortalMetadata).ChunkedBackfillPending
 	if fetchParams.Forward && tc.backfillSplitBytes() > 0 {
 		// Hold new messages of the room from now on, see chunkedbackfill.go. If there's nothing to
 		// send or fetching fails, release them right away, as no chunk will complete.
@@ -185,6 +190,9 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		return nil, nil
 	}
 	limit := fetchParams.Count
+	if continuingChunks {
+		limit = max(limit, tc.main.Bridge.Config.Backfill.MaxInitialMessages)
+	}
 	const chunkLimit = 100
 	makeReq := func() bin.Object {
 		if topicID > 0 {
