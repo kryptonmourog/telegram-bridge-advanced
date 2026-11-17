@@ -1,0 +1,78 @@
+---
+- name: Validate image source
+  ansible.builtin.assert:
+    that:
+      - companion_image_name | length > 0
+      - companion_image_source in ['registry', 'local', 'existing']
+    fail_msg: >-
+      Image source must be registry, local or existing, and the image name must not be empty.
+
+- name: Inspect the image on the target
+  community.docker.docker_image_info:
+    name: "{{ companion_image_name }}"
+  register: companion_target_image
+
+- name: Pull the image from a registry
+  community.docker.docker_image_pull:
+    name: "{{ companion_image_name }}"
+  when:
+    - companion_image_source == 'registry'
+    - not ansible_check_mode
+
+- name: Transfer a local image to the target
+  when:
+    - companion_image_source == 'local'
+    - companion_target_image.images | length == 0
+    - not ansible_check_mode
+  block:
+    - name: Create a temporary image directory on the controller
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: telegram-bridge-image-
+      delegate_to: localhost
+      become: false
+      register: companion_local_image_temp
+
+    - name: Export the local image
+      community.docker.docker_image_export:
+        names: ["{{ companion_image_name }}"]
+        path: "{{ companion_local_image_temp.path }}/image.tar"
+      delegate_to: localhost
+      become: false
+
+    - name: Create a temporary image file on the target
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .tar
+      register: companion_remote_image_temp
+
+    - name: Copy the image to the target
+      ansible.builtin.copy:
+        src: "{{ companion_local_image_temp.path }}/image.tar"
+        dest: "{{ companion_remote_image_temp.path }}"
+        mode: "0600"
+
+    - name: Load the image on the target
+      community.docker.docker_image_load:
+        path: "{{ companion_remote_image_temp.path }}"
+  always:
+    - name: Remove the temporary image file from the target
+      ansible.builtin.file:
+        path: "{{ companion_remote_image_temp.path | default('/nonexistent') }}"
+        state: absent
+      when: companion_remote_image_temp is defined
+
+    - name: Remove the temporary image directory from the controller
+      ansible.builtin.file:
+        path: "{{ companion_local_image_temp.path | default('/nonexistent') }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: companion_local_image_temp is defined
+
+- name: Require an existing image
+  ansible.builtin.assert:
+    that:
+      - companion_target_image.images | length > 0
+    fail_msg: "Image {{ companion_image_name }} is not loaded on {{ inventory_hostname }}."
+  when: companion_image_source == 'existing'

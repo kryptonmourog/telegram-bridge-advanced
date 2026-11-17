@@ -1,0 +1,89 @@
+---
+- name: Validate wsproxy settings
+  ansible.builtin.assert:
+    that:
+      - telegram_homeserver_hostname | length > 0
+      - groups['telegram_bridge_servers'] | default([]) | length == 1
+      - ansible_check_mode or hostvars[groups['telegram_bridge_servers'][0]].telegram_bridge_registration is defined
+    fail_msg: Run the complete companion playbook with exactly one telegram_bridge_servers host.
+
+- name: Read the registration from the bridge host
+  ansible.builtin.set_fact:
+    telegram_wsproxy_source_registration: >-
+      {{ hostvars[groups['telegram_bridge_servers'][0]].telegram_bridge_registration }}
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Build the Synapse registration
+  ansible.builtin.set_fact:
+    telegram_wsproxy_synapse_registration: >-
+      {{ telegram_wsproxy_source_registration |
+         combine({'url': 'http://' + telegram_wsproxy_container_name + ':' +
+                          (telegram_wsproxy_port | string)}) |
+         combine(({'org.matrix.msc3202': true, 'io.element.msc4190': true})
+                 if telegram_bridge_encryption_enabled | bool else {}) }}
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Install the wsproxy image
+  ansible.builtin.include_role:
+    name: _docker_image
+  vars:
+    companion_image_name: "{{ telegram_wsproxy_image }}"
+    companion_image_source: "{{ telegram_wsproxy_image_source }}"
+
+- name: Check required Docker networks
+  ansible.builtin.command:
+    argv: [docker, network, inspect, "{{ item }}"]
+  loop:
+    - "{{ telegram_wsproxy_synapse_network }}"
+    - "{{ telegram_traefik_network }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Create the wsproxy directory
+  ansible.builtin.file:
+    path: "{{ telegram_wsproxy_base_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Write the Synapse registration
+  ansible.builtin.copy:
+    content: "{{ telegram_wsproxy_synapse_registration | to_nice_yaml(indent=2, sort_keys=false) }}"
+    dest: "{{ telegram_wsproxy_base_path }}/registration.yaml"
+    owner: "{{ telegram_synapse_uid }}"
+    group: "{{ telegram_synapse_gid }}"
+    mode: "0600"
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Write the wsproxy environment file
+  ansible.builtin.copy:
+    content: |
+      APPSERVICE_ID={{ telegram_wsproxy_source_registration.id }}
+      AS_TOKEN={{ telegram_wsproxy_source_registration.as_token }}
+      HS_TOKEN={{ telegram_wsproxy_source_registration.hs_token }}
+    dest: "{{ telegram_wsproxy_base_path }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Write wsproxy compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ telegram_wsproxy_base_path }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Start wsproxy
+  community.docker.docker_compose_v2:
+    project_src: "{{ telegram_wsproxy_base_path }}"
+    state: present
+    pull: never
+    remove_orphans: true
+  when: not ansible_check_mode

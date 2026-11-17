@@ -1,0 +1,27 @@
+name: mautrix-telegram
+services:
+  telegram:
+    image: {{ telegram_bridge_image }}
+    container_name: {{ telegram_bridge_container_name }}
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+{% if telegram_direct_media_enabled | bool %}
+  media-tunnel:
+    image: {{ telegram_chisel_image }}
+    container_name: mautrix-telegram-media-tunnel
+    restart: unless-stopped
+    depends_on:
+      - telegram
+    command:
+      - client
+      - --auth
+      - ${CHISEL_AUTH}
+      - https://{{ telegram_media_hostname }}
+      - R:0.0.0.0:29318:telegram:29317
+{% endif %}

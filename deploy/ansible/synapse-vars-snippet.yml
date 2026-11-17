@@ -1,0 +1,12 @@
+# Merge these values into the Matrix server's existing vars.yml.
+# Preserve any existing matrix_synapse_container_extra_arguments entries.
+matrix_synapse_experimental_features_msc2409_to_device_messages_enabled: true
+matrix_synapse_experimental_features_msc3202_transaction_extensions_enabled: true
+
+matrix_synapse_container_additional_volumes:
+  - src: /opt/matrix-telegram-wsproxy/registration.yaml
+    dst: /matrix-telegram-registration.yaml
+    options: ro
+
+matrix_synapse_app_service_config_files:
+  - /matrix-telegram-registration.yaml

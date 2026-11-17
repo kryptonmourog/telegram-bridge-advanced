@@ -1,0 +1,11 @@
+---
+telegram_media_gateway_base_path: /opt/matrix-telegram-media
+telegram_media_hostname: ""
+telegram_media_tunnel_auth: ""
+telegram_chisel_image: jpillora/chisel:1.12.0
+telegram_socat_image: alpine/socat:1.8.0.3
+telegram_traefik_network: traefik
+telegram_traefik_entrypoint: web-secure
+telegram_traefik_cert_resolver: default
+telegram_media_server_implementation_name: ""
+telegram_media_server_implementation_version: ""

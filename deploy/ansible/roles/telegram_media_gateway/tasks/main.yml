@@ -1,0 +1,57 @@
+---
+- name: Validate media gateway settings
+  ansible.builtin.assert:
+    that:
+      - telegram_media_hostname | length > 0
+      - telegram_media_tunnel_auth | length >= 16
+      - "':' in telegram_media_tunnel_auth"
+    fail_msg: Set telegram_media_hostname and a vaulted telegram_media_tunnel_auth in user:password format.
+  no_log: true
+
+- name: Pull media gateway images
+  community.docker.docker_image_pull:
+    name: "{{ item }}"
+  loop:
+    - "{{ telegram_chisel_image }}"
+    - "{{ telegram_socat_image }}"
+  when: not ansible_check_mode
+
+- name: Check the Traefik network
+  ansible.builtin.command:
+    argv: [docker, network, inspect, "{{ telegram_traefik_network }}"]
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Create the media gateway directory
+  ansible.builtin.file:
+    path: "{{ telegram_media_gateway_base_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Write media gateway environment file
+  ansible.builtin.copy:
+    content: |
+      CHISEL_AUTH={{ telegram_media_tunnel_auth }}
+    dest: "{{ telegram_media_gateway_base_path }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Write media gateway compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ telegram_media_gateway_base_path }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Start the media gateway
+  community.docker.docker_compose_v2:
+    project_src: "{{ telegram_media_gateway_base_path }}"
+    state: present
+    pull: never
+    remove_orphans: true
+  when: not ansible_check_mode

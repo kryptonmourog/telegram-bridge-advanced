@@ -1,0 +1,42 @@
+---
+# Copy this file to group_vars/all.yml next to your inventory. Store secrets with Ansible Vault.
+
+telegram_homeserver_url: https://matrix.example.org
+telegram_homeserver_domain: example.org
+telegram_homeserver_hostname: matrix.example.org
+telegram_media_hostname: telegram-media.example.org
+
+# Get these values from https://my.telegram.org/apps.
+telegram_api_id: 123456
+telegram_api_hash: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_ANSIBLE_VAULT
+
+# At least one Matrix user must be an admin of the bridge.
+telegram_bridge_permissions:
+  "@admin:example.org": admin
+
+# Use registry for a pullable image, local for an image in the controller's Docker,
+# or existing when the image is already loaded on the target server.
+telegram_bridge_image: ghcr.io/example/telegram-bridge-advanced:latest
+telegram_bridge_image_source: registry
+telegram_wsproxy_image: ghcr.io/example/wsproxy-advanced:latest
+telegram_wsproxy_image_source: registry
+
+telegram_direct_media_enabled: true
+telegram_direct_media_scope: channels
+telegram_media_server_implementation_name: telegram media
+telegram_media_server_implementation_version: "1"
+# Chisel expects user:password.
+telegram_media_tunnel_auth: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  REPLACE_WITH_ANSIBLE_VAULT
+
+# UID and GID used by the Synapse container to read the registration bind mount.
+# Check them on the Matrix server with: docker exec matrix-synapse id
+telegram_synapse_uid: 991
+telegram_synapse_gid: 991
+
+# Encryption needs the patched wsproxy and the two Synapse MSC flags from README.md.
+telegram_bridge_encryption_enabled: true
+telegram_bridge_encryption_personal: true
