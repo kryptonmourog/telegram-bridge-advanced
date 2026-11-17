@@ -165,7 +165,8 @@ skip_media: []
 # Should communities on Telegram be bridged as Matrix spaces?
 bridge_communities: true
 # Should polls be sent using unstable MSC3381 event types?
-# Bridging votes from Telegram is not supported.
+# Telegram polls then become Matrix polls with a notice showing Telegram's results, and
+# the user's own vote is bridged both ways. When false, polls from Telegram are plain text.
 extev_polls: false
 # Displayname template for Telegram users.
 # {{ .FullName }} - the full name of the Telegram user
