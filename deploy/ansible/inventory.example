@@ -1,5 +1,0 @@
-[matrix_servers]
-matrix.example.org ansible_host=matrix.example.org ansible_user=root
-
-[telegram_bridge_servers]
-telegram-vps.example.org ansible_host=telegram-vps.example.org ansible_user=root
