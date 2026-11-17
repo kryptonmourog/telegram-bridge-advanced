@@ -148,6 +148,9 @@ video_url_preview_as_file: false
 # fail and are retried forever. When this is set, the 3 minute limit only applies to waiting for the
 # homeserver's response after the request has been sent. Empty keeps the default.
 matrix_request_timeout:
+# Which Telegram portals use direct media when bridge.direct_media.enabled is true.
+# all - all chats; channels - channels and supergroups, but not DMs or basic groups; off - none.
+direct_media_scope: channels
 # Split forward backfill into chunks that end at files larger than this (in megabytes). Each chunk is
 # sent to Matrix as soon as it's ready, so a room's history shows up while large videos are still
 # uploading instead of all at once at the end. 0 sends the whole backfill at once.

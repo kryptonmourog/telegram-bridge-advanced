@@ -278,3 +278,29 @@ func directMediaError(err error) error {
 func (tc *TelegramConnector) SetUseDirectMedia() {
 	tc.useDirectMedia = true
 }
+
+func (tc *TelegramConnector) shouldUseDirectMediaForPeerType(peerType ids.PeerType) bool {
+	if !tc.useDirectMedia {
+		return false
+	}
+	switch tc.Config.GetDirectMediaScope() {
+	case DirectMediaScopeAll:
+		return true
+	case DirectMediaScopeChannels:
+		return peerType == ids.PeerTypeChannel
+	default:
+		return false
+	}
+}
+
+func (tc *TelegramConnector) shouldUseDirectMediaForPortal(portal *bridgev2.Portal) bool {
+	if portal == nil {
+		return false
+	}
+	peerType, _, _, err := ids.ParsePortalID(portal.ID)
+	return err == nil && tc.shouldUseDirectMediaForPeerType(peerType)
+}
+
+func (tc *TelegramConnector) shouldUseDirectMediaForGlobalMedia() bool {
+	return tc.useDirectMedia && tc.Config.GetDirectMediaScope() == DirectMediaScopeAll
+}

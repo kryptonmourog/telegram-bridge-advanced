@@ -102,12 +102,26 @@ type TelegramConfig struct {
 	DisableViewOnce                      bool                `yaml:"disable_view_once"`
 	VideoURLPreviewAsFile                bool                `yaml:"video_url_preview_as_file"`
 	MatrixRequestTimeout                 string              `yaml:"matrix_request_timeout"`
+	DirectMediaScope                     string              `yaml:"direct_media_scope"`
 	BackfillSplitMediaMB                 int64               `yaml:"backfill_split_media_mb"`
 	SkipMedia                            []SkipMediaRule     `yaml:"skip_media"`
 	BridgeCommunities                    bool                `yaml:"bridge_communities"`
 	ExtEvPolls                           bool                `yaml:"extev_polls"`
 	DisplaynameTemplate                  string              `yaml:"displayname_template"`
 	displaynameTemplate                  *template.Template  `yaml:"-"`
+}
+
+const (
+	DirectMediaScopeAll      = "all"
+	DirectMediaScopeChannels = "channels"
+	DirectMediaScopeOff      = "off"
+)
+
+func (c TelegramConfig) GetDirectMediaScope() string {
+	if c.DirectMediaScope == "" {
+		return DirectMediaScopeChannels
+	}
+	return c.DirectMediaScope
 }
 
 // SkipMediaRule matches files that aren't bridged, see skip_media in the example config.
@@ -231,6 +245,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "disable_view_once")
 	helper.Copy(up.Bool, "video_url_preview_as_file")
 	helper.Copy(up.Str|up.Null, "matrix_request_timeout")
+	helper.Copy(up.Str, "direct_media_scope")
 	helper.Copy(up.Int, "backfill_split_media_mb")
 	helper.Copy(up.List, "skip_media")
 	helper.Copy(up.Bool, "bridge_communities")
@@ -265,6 +280,9 @@ func (tc *TelegramConnector) ValidateConfig() error {
 	}
 	if !slices.Contains([]string{"disable", "gif", "png", "webp", "webm"}, tc.Config.AnimatedSticker.Target) {
 		return fmt.Errorf("unsupported animated sticker target: %s", tc.Config.AnimatedSticker.Target)
+	}
+	if !slices.Contains([]string{DirectMediaScopeAll, DirectMediaScopeChannels, DirectMediaScopeOff}, tc.Config.GetDirectMediaScope()) {
+		return fmt.Errorf("unsupported direct media scope: %s", tc.Config.DirectMediaScope)
 	}
 	return nil
 }
