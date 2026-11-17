@@ -601,7 +601,7 @@ func (fs *folderSpaceManager) staleSpaceChildren(ctx context.Context, space id.R
 	if !ok {
 		return nil, fmt.Errorf("bridge bot is %T, can't read room state", fs.tc.main.Bridge.Bot)
 	}
-	state, err := intent.Matrix.State(ctx, space)
+	state, err := intent.Matrix().State(ctx, space)
 	if err != nil {
 		return nil, err
 	}

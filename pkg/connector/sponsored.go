@@ -116,7 +116,7 @@ func (tc *TelegramClient) sponsoredMessageIntent(ctx context.Context, room id.Ro
 		return nil, fmt.Errorf("bridge bot is %T, can't check power levels", tc.main.Bridge.Bot)
 	}
 	var pl event.PowerLevelsEventContent
-	if err = bot.Matrix.StateEvent(ctx, room, event.StatePowerLevels, "", &pl); err != nil {
+	if err = bot.Matrix().StateEvent(ctx, room, event.StatePowerLevels, "", &pl); err != nil {
 		return nil, fmt.Errorf("failed to get power levels: %w", err)
 	}
 	ghostMXID := ghost.Intent.GetMXID()

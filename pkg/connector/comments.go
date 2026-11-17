@@ -265,7 +265,7 @@ func (tc *TelegramClient) ensureCommentsAllowed(ctx context.Context, room id.Roo
 		return nil
 	}
 	var pl event.PowerLevelsEventContent
-	if err := bot.Matrix.StateEvent(ctx, room, event.StatePowerLevels, "", &pl); err != nil {
+	if err := bot.Matrix().StateEvent(ctx, room, event.StatePowerLevels, "", &pl); err != nil {
 		return fmt.Errorf("failed to get power levels: %w", err)
 	}
 	if pl.EventsDefault > 0 {
@@ -362,7 +362,7 @@ func (tc *TelegramClient) mirrorSentByCommenter(ctx context.Context, mirror *com
 	if !ok {
 		return true
 	}
-	evt, err := bot.Matrix.GetEvent(ctx, mirror.RoomID, mirror.EventID)
+	evt, err := bot.Matrix().GetEvent(ctx, mirror.RoomID, mirror.EventID)
 	if err != nil {
 		return true
 	}
@@ -378,7 +378,7 @@ func (tc *TelegramClient) readCommentThread(ctx context.Context, room id.RoomID,
 	if !ok || dp == nil {
 		return
 	}
-	err := dp.Matrix.SendReceipt(ctx, room, eventID, event.ReceiptTypeRead, map[string]any{"thread_id": threadRoot})
+	err := dp.Matrix().SendReceipt(ctx, room, eventID, event.ReceiptTypeRead, map[string]any{"thread_id": threadRoot})
 	if err != nil {
 		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to mark comment thread read")
 	}

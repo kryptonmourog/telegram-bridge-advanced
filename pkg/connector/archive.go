@@ -270,7 +270,7 @@ func (fs *folderSpaceManager) setArchiveMembership(ctx context.Context, portal *
 		}
 		// Leaving fails if the user isn't in the room, which hides it just as well, so the room
 		// counts as left either way and isn't retried on every reconcile.
-		if _, err := asIntent.Matrix.LeaveRoom(ctx, portal.MXID); err != nil {
+		if _, err := asIntent.Matrix().LeaveRoom(ctx, portal.MXID); err != nil {
 			log.Warn().Err(err).Msg("Failed to leave room of archived chat")
 		}
 		left[portal.MXID] = struct{}{}

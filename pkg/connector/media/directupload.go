@@ -67,7 +67,7 @@ func (t *ReadyTransferer) uploadDirectly(ctx context.Context, asIntent *matrix.A
 		return "", fmt.Errorf("%w (%.2f MB > %.2f MB)", bridgev2.ErrMediaTooLarge, float64(size)/1000/1000, float64(limit)/1000/1000)
 	}
 	zerolog.Ctx(ctx).Debug().Int64("size", size).Msg("Streaming file from Telegram to Matrix without a temporary file")
-	resp, err := asIntent.Matrix.UploadMedia(ctx, mautrix.ReqUploadMedia{
+	resp, err := asIntent.Matrix().UploadMedia(ctx, mautrix.ReqUploadMedia{
 		Content:       io.LimitReader(reader, size),
 		ContentLength: size,
 		ContentType:   t.inner.fileInfo.MimeType,

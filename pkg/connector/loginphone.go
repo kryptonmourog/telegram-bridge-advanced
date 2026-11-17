@@ -175,7 +175,7 @@ func (pl *PhoneLogin) submitCode(ctx context.Context, code string) (*bridgev2.Lo
 	if pl.client == nil {
 		return nil, fmt.Errorf("unexpected state: client is nil when submitting phone code")
 	} else if code == "" {
-		return phoneCodeStep(pl.codeType)
+		return phoneCodeStep(pl.codeType, pl.t)
 	}
 	authorization, err := pl.client.Auth().SignIn(ctx, pl.phone, code, pl.hash)
 	if errors.Is(err, auth.ErrPasswordAuthNeeded) {
