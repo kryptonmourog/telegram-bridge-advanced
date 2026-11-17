@@ -52,6 +52,9 @@ func (tc *TelegramConnector) Start(ctx context.Context) error {
 	if err := tc.applyMatrixRequestTimeout(); err != nil {
 		return err
 	}
+	if tc.useDirectMedia {
+		tc.Bridge.Log.Info().Str("scope", tc.Config.GetDirectMediaScope()).Msg("Enabled direct media")
+	}
 	if err := tc.Store.Upgrade(ctx); err != nil {
 		return err
 	}
