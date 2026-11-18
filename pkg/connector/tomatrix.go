@@ -748,6 +748,17 @@ func findRichMessagePhoto(message *tg.RichMessage, photoID int64) *tg.Photo {
 
 // convertRichDocuments converts the videos and audio of rich message blocks into separate message
 // parts.
+// messageChat returns the chat a message is in. It isn't always the portal's chat: comments are
+// mirrored into the channel room from its discussion group, and their media has to be fetched from
+// there.
+func messageChat(portal *bridgev2.Portal, msg *tg.Message) (ids.PeerType, int64, error) {
+	if msg.PeerID != nil {
+		return ids.PeerTypeAndID(msg.PeerID)
+	}
+	peerType, chatID, _, err := ids.ParsePortalID(portal.ID)
+	return peerType, chatID, err
+}
+
 func (tc *TelegramClient) convertRichDocuments(
 	ctx context.Context,
 	portal *bridgev2.Portal,
@@ -798,8 +809,8 @@ func (tc *TelegramClient) webpageToBeeperLinkPreview(ctx context.Context, portal
 	if photo, ok := webpage.Photo.(*tg.Photo); ok && (!tc.main.Config.VideoURLPreviewAsFile || unwrapWebPage(msgMedia) == nil) {
 		var fileInfo *event.FileInfo
 		transferer := media.NewTransferer(tc.client.API()).WithPhoto(photo)
-		if tc.main.shouldUseDirectMediaForPortal(portal) {
-			preview.ImageURL, fileInfo, err = transferer.DirectDownloadURL(ctx, tc.telegramUserID, portal, msg.ID, true, 0)
+		if peerType, chatID, chatErr := messageChat(portal, msg); chatErr == nil && tc.main.shouldUseDirectMediaForPortal(portal) {
+			preview.ImageURL, fileInfo, err = transferer.DirectDownloadURL(ctx, tc.main.Bridge, tc.telegramUserID, peerType, chatID, msg.ID, true, 0)
 		} else {
 			preview.ImageURL, preview.ImageEncryption, fileInfo, err = transferer.Transfer(ctx, tc.main.Store, intent)
 		}
@@ -852,6 +863,12 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		Str("portal_id", string(portal.ID)).
 		Int("msg_id", msgID).
 		Logger()
+	useDirectMedia := tc.main.shouldUseDirectMediaForPortal(portal)
+	peerType, chatID, err := messageChat(portal, msg)
+	if err != nil {
+		log.Err(err).Msg("Failed to get the chat of the message, not using direct media")
+		useDirectMedia = false
+	}
 	eventType := event.EventMessage
 	var content event.MessageEventContent
 	var telegramMediaID int64
@@ -936,8 +953,8 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 			thumbnailTransferer := media.NewTransferer(tc.client.API()).
 				WithRoomID(portal.MXID).
 				WithPhoto(photo)
-			if tc.main.shouldUseDirectMediaForPortal(portal) {
-				thumbnailURL, thumbnailInfo, err = thumbnailTransferer.DirectDownloadURL(ctx, tc.telegramUserID, portal, msgID, true, photo.ID)
+			if useDirectMedia {
+				thumbnailURL, thumbnailInfo, err = thumbnailTransferer.DirectDownloadURL(ctx, tc.main.Bridge, tc.telegramUserID, peerType, chatID, msgID, true, photo.ID)
 				if err != nil {
 					log.Err(err).Msg("Failed to create direct download URL for thumbnail")
 				}
@@ -1082,8 +1099,8 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 				WithRoomID(portal.MXID).
 				WithPhoto(msgMedia.VideoCover.(*tg.Photo))
 		}
-		if tc.main.shouldUseDirectMediaForPortal(portal) && thumbnailTransferer != nil {
-			thumbnailURL, thumbnailInfo, err = thumbnailTransferer.DirectDownloadURL(ctx, tc.telegramUserID, portal, msgID, true, document.ID)
+		if useDirectMedia && thumbnailTransferer != nil {
+			thumbnailURL, thumbnailInfo, err = thumbnailTransferer.DirectDownloadURL(ctx, tc.main.Bridge, tc.telegramUserID, peerType, chatID, msgID, true, document.ID)
 			if err != nil {
 				log.Err(err).Msg("Failed to create direct download URL for thumbnail")
 			}
@@ -1112,9 +1129,8 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		return
 	}
 
-	var err error
-	if tc.main.shouldUseDirectMediaForPortal(portal) {
-		content.URL, content.Info, err = mediaTransferer.DirectDownloadURL(ctx, tc.telegramUserID, portal, msgID, false, telegramMediaID)
+	if useDirectMedia {
+		content.URL, content.Info, err = mediaTransferer.DirectDownloadURL(ctx, tc.main.Bridge, tc.telegramUserID, peerType, chatID, msgID, false, telegramMediaID)
 		if err != nil {
 			log.Err(err).Msg("Failed to create direct download URL for media")
 		}
@@ -1149,10 +1165,10 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		if err != nil {
 			if tgerr.Is(err, tg.ErrFileReferenceExpired) && allowRefetch {
 				log.Warn().Err(err).Msg("Failed to transfer media, trying to refetch from message")
-				peerType, peerID, _, err := ids.ParsePortalID(portal.ID)
+				peerType, chatID, err := messageChat(portal, msg)
 				if err != nil {
-					log.Err(err).Msg("Failed to parse portal ID to refetch media")
-				} else if msgMedia, err = tc.refetchMedia(ctx, peerType, peerID, msgID); err != nil {
+					log.Err(err).Msg("Failed to get chat to refetch media from")
+				} else if msgMedia, err = tc.refetchMedia(ctx, peerType, chatID, msgID); err != nil {
 					log.Err(err).Msg("Failed to refetch media after file reference expired error")
 				} else {
 					return tc.convertMediaRequiringUpload(ctx, portal, intent, msg, msgMedia, false)

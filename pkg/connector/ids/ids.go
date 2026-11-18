@@ -217,6 +217,20 @@ func InternalPeerToPortalKey(peer tg.PeerClass, topicID int, receiver networkid.
 	}
 }
 
+// PeerTypeAndID returns the type and ID of a chat.
+func PeerTypeAndID(peer tg.PeerClass) (PeerType, int64, error) {
+	switch v := peer.(type) {
+	case *tg.PeerUser:
+		return PeerTypeUser, v.UserID, nil
+	case *tg.PeerChat:
+		return PeerTypeChat, v.ChatID, nil
+	case *tg.PeerChannel:
+		return PeerTypeChannel, v.ChannelID, nil
+	default:
+		return "", 0, fmt.Errorf("unknown peer class type %T", v)
+	}
+}
+
 func ParsePortalID(portalID networkid.PortalID) (pt PeerType, id int64, topicID int, err error) {
 	parts := strings.Split(string(portalID), ":")
 	pt = PeerType(parts[0])

@@ -577,12 +577,10 @@ func (t *ReadyTransferer) StickerDirectDownloadURL(ctx context.Context, br *brid
 	return mxc, &t.inner.fileInfo, err
 }
 
-// DirectDownloadURL returns the direct download URL for the media.
-func (t *ReadyTransferer) DirectDownloadURL(ctx context.Context, loggedInUserID int64, portal *bridgev2.Portal, msgID int, thumbnail bool, telegramMediaID int64) (id.ContentURIString, *event.FileInfo, error) {
-	peerType, chatID, _, err := ids.ParsePortalID(portal.ID)
-	if err != nil {
-		return "", nil, err
-	}
+// DirectDownloadURL returns the direct download URL for the media of a message in the given chat.
+// The chat is where the message is, which isn't always the portal's chat: comments are mirrored
+// into the channel room from its discussion group.
+func (t *ReadyTransferer) DirectDownloadURL(ctx context.Context, br *bridgev2.Bridge, loggedInUserID int64, peerType ids.PeerType, chatID int64, msgID int, thumbnail bool, telegramMediaID int64) (id.ContentURIString, *event.FileInfo, error) {
 	mediaID, err := ids.DirectMediaInfo{
 		PeerType:  peerType,
 		PeerID:    chatID,
@@ -594,7 +592,7 @@ func (t *ReadyTransferer) DirectDownloadURL(ctx context.Context, loggedInUserID 
 	if err != nil {
 		return "", nil, err
 	}
-	mxc, err := portal.Bridge.Matrix.GenerateContentURI(ctx, mediaID)
+	mxc, err := br.Matrix.GenerateContentURI(ctx, mediaID)
 	if t.inner.fileInfo.MimeType == "" {
 		t.inner.fileInfo.MimeType = "application/octet-stream"
 	}
