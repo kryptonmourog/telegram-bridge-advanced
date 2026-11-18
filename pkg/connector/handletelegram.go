@@ -1152,12 +1152,7 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 	case *tg.UpdateReadChannelInbox:
 		return tc.onOwnReadReceipt(tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, 0), update.MaxID)
 	case *tg.UpdateReadChannelDiscussionInbox:
-		// Reading a forum topic (or a comment thread, which has no room of its own and is ignored).
-		topicID := update.TopMsgID
-		if topicID == generalTopicID {
-			topicID = 0
-		}
-		return tc.onOwnReadReceipt(tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, topicID), update.ReadMaxID)
+		return tc.onReadDiscussion(ctx, update)
 	case *tg.UpdateNotifySettings:
 		return tc.onNotifySettings(ctx, e, update)
 	case *tg.UpdatePinnedDialogs:
@@ -1436,6 +1431,24 @@ func (tc *TelegramClient) onOwnReadReceipt(portalKey networkid.PortalKey, maxID 
 		ReadUpToStreamOrder: int64(maxID),
 	})
 	return resultToError(res)
+}
+
+// onReadDiscussion bridges reading a forum topic. Telegram sends the same update for comment threads
+// of discussion groups, which have no room of their own. Queueing a receipt would create a portal for
+// such a thread, so only rooms that exist get it.
+func (tc *TelegramClient) onReadDiscussion(ctx context.Context, update *tg.UpdateReadChannelDiscussionInbox) error {
+	topicID := update.TopMsgID
+	if topicID == generalTopicID {
+		topicID = 0
+	}
+	portalKey := tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, topicID)
+	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, portalKey)
+	if err != nil {
+		return fmt.Errorf("failed to get portal of read thread: %w", err)
+	} else if portal == nil || portal.MXID == "" {
+		return nil
+	}
+	return tc.onOwnReadReceipt(portalKey, update.ReadMaxID)
 }
 
 func (tc *TelegramClient) inputPeerForPortalID(ctx context.Context, portalID networkid.PortalID) (tg.InputPeerClass, int, error) {
