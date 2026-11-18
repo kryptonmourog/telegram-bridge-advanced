@@ -26,6 +26,7 @@ import (
 )
 
 type roomEncryptionMatrix interface {
+	CanEncryptRooms() bool
 	IsRoomEncrypted(context.Context, id.RoomID) (bool, error)
 	EnableRoomEncryption(context.Context, id.RoomID) error
 }
@@ -50,6 +51,10 @@ func fnEncryption(ce *commands.Event) {
 	matrix, ok := ce.Bridge.Matrix.(roomEncryptionMatrix)
 	if !ok {
 		ce.Reply("Matrix connector doesn't support room encryption.")
+		return
+	}
+	if !matrix.CanEncryptRooms() {
+		ce.Reply("Encryption isn't enabled in the bridge config, so the bridge couldn't read an encrypted room.")
 		return
 	}
 	encrypted, err := matrix.IsRoomEncrypted(ce.Ctx, ce.RoomID)

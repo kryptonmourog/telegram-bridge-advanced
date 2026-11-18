@@ -713,6 +713,7 @@ var ruTranslations = map[string]string{
 	"[`on confirm`]": "[`on confirm`]",
 	"Encryption can only be enabled in private chats.":  "Шифрование этой командой можно включить только в личных чатах.",
 	"Matrix connector doesn't support room encryption.": "Коннектор Matrix не поддерживает шифрование комнат.",
+	"Encryption isn't enabled in the bridge config, so the bridge couldn't read an encrypted room.": "Шифрование не включено в настройках моста: мост не смог бы читать зашифрованную комнату.",
 	"Failed to check room encryption: %v":               "Не удалось проверить шифрование комнаты: %v",
 	"Encryption is already enabled in this room.":       "Шифрование в этой комнате уже включено.",
 	"This is irreversible. Element may warn that the event sender and device owner don't match. To enable encryption permanently, use `$cmdprefix encryption on confirm`.": "Это необратимо. Element может предупреждать, что отправитель события и владелец устройства не совпадают. Чтобы навсегда включить шифрование, используй `$cmdprefix encryption on confirm`.",
