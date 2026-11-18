@@ -856,15 +856,27 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 	text, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal, tc.getMaxMessageLength(ctx, false))
 	var randomID [8]byte
 	_, _ = rand.Read(randomID[:])
-	updates, err := tc.client.API().MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+	if err = tc.sendComment(ctx, thread, msg, &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerChannel{ChannelID: group.ChannelID, AccessHash: group.AccessHash},
 		Message:  text,
 		Entities: entities,
 		RandomID: int64(binary.LittleEndian.Uint64(randomID[:])),
 		ReplyTo:  &tg.InputReplyToMessage{ReplyToMsgID: replyToID, TopMsgID: thread.CopyID},
-	})
+	}); err != nil {
+		return true, err
+	}
+	return true, errCommentSent
+}
+
+// sendComment sends a comment written in Matrix and records the Matrix event as its mirror. Telegram
+// can deliver the new comment as an update before the request returns; the comment lock keeps
+// mirrorComment from mirroring it back into the thread until the mirror is saved.
+func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread, msg *bridgev2.MatrixMessage, req *tg.MessagesSendMessageRequest) error {
+	tc.comments.lock.Lock()
+	defer tc.comments.lock.Unlock()
+	updates, err := tc.client.API().MessagesSendMessage(ctx, req)
 	if err != nil {
-		return true, fmt.Errorf("failed to send comment: %w", err)
+		return fmt.Errorf("failed to send comment: %w", err)
 	}
 	if err = tc.markCommentParticipation(ctx, thread.GroupID, thread.CopyID); err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment thread participation")
@@ -875,8 +887,10 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 		}); err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save sent comment")
 		}
+	} else {
+		zerolog.Ctx(ctx).Warn().Msg("Telegram didn't return the ID of the sent comment, it may appear twice in the thread")
 	}
-	return true, errCommentSent
+	return nil
 }
 
 // sentMessageID finds the ID of a sent message in the updates Telegram returned.
