@@ -26,56 +26,82 @@ import (
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/matrix"
+	"maunium.net/go/mautrix/crypto/attachment"
+	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 )
 
 // bridgev2 writes every file above the in-memory threshold to a temporary file (preallocated to the
 // full size) before uploading it, so a bridge needs as much free disk as the largest file it bridges,
 // up to 4 GB with Telegram. Large files that need no processing are instead streamed from Telegram
-// straight into the upload request. If the upload fails, the file is downloaded from Telegram again
-// on the next attempt instead of being re-read from disk.
+// straight into the upload request, encrypted on the fly in encrypted rooms (AES-CTR needs no look
+// ahead, and the hash of the encrypted file is only needed in the event sent after the upload). If
+// the upload fails, the file is downloaded from Telegram again on the next attempt instead of being
+// re-read from disk.
 
-// directUploadIntent returns the appservice intent to stream the file to, or nil if the file has to
-// go through bridgev2's regular upload (small, converted or image files, encrypted rooms).
-func (t *ReadyTransferer) directUploadIntent(ctx context.Context, intent bridgev2.MatrixAPI) *matrix.ASIntent {
+// directUploadIntent returns the appservice intent to stream the file to and whether the room is
+// encrypted, or nil if the file has to go through bridgev2's regular upload (small, converted or
+// image files).
+func (t *ReadyTransferer) directUploadIntent(ctx context.Context, intent bridgev2.MatrixAPI) (*matrix.ASIntent, bool) {
 	asIntent, ok := intent.(*matrix.ASIntent)
 	if !ok || asIntent.Connector == nil {
-		return nil
+		return nil, false
 	}
 	size := int64(t.inner.fileInfo.Size)
 	if size <= 0 || size < asIntent.Connector.Config.Matrix.UploadFileThreshold {
-		return nil
+		return nil, false
 	}
 	// Stickers may be converted and images need their dimensions, both read the whole file.
 	if t.expectedStickerConvertMime() != "" || t.inner.animatedStickerConfig != nil ||
 		strings.HasPrefix(t.inner.fileInfo.MimeType, "image/") {
-		return nil
+		return nil, false
 	}
 	// The same check bridgev2's upload uses, which also covers encryption.require.
+	encrypted := false
 	if t.inner.roomID != "" {
-		if encrypted, err := asIntent.Connector.IsRoomEncrypted(ctx, t.inner.roomID); err != nil || encrypted {
-			return nil
+		var err error
+		if encrypted, err = asIntent.Connector.IsRoomEncrypted(ctx, t.inner.roomID); err != nil {
+			return nil, false
 		}
 	}
-	return asIntent
+	return asIntent, encrypted
 }
 
-func (t *ReadyTransferer) uploadDirectly(ctx context.Context, asIntent *matrix.ASIntent, reader io.Reader) (id.ContentURIString, error) {
+func (t *ReadyTransferer) uploadDirectly(ctx context.Context, asIntent *matrix.ASIntent, reader io.Reader, encrypt bool) (id.ContentURIString, *event.EncryptedFileInfo, error) {
 	size := int64(t.inner.fileInfo.Size)
 	if limit := asIntent.Connector.MediaConfig.UploadSize; limit > 0 && size > limit {
-		return "", fmt.Errorf("%w (%.2f MB > %.2f MB)", bridgev2.ErrMediaTooLarge, float64(size)/1000/1000, float64(limit)/1000/1000)
+		return "", nil, fmt.Errorf("%w (%.2f MB > %.2f MB)", bridgev2.ErrMediaTooLarge, float64(size)/1000/1000, float64(limit)/1000/1000)
 	}
-	zerolog.Ctx(ctx).Debug().Int64("size", size).Msg("Streaming file from Telegram to Matrix without a temporary file")
-	resp, err := asIntent.Matrix().UploadMedia(ctx, mautrix.ReqUploadMedia{
+	req := mautrix.ReqUploadMedia{
 		Content:       io.LimitReader(reader, size),
 		ContentLength: size,
 		ContentType:   t.inner.fileInfo.MimeType,
 		FileName:      t.inner.filename,
-	})
-	if err != nil {
-		return "", err
 	}
-	return resp.ContentURI.CUString(), nil
+	var file *event.EncryptedFileInfo
+	var encrypting io.ReadCloser
+	if encrypt {
+		// Like bridgev2's upload: the type and name of an encrypted file are only in the event.
+		file = &event.EncryptedFileInfo{EncryptedFile: *attachment.NewEncryptedFile()}
+		encrypting = file.EncryptStream(req.Content)
+		req.Content = encrypting
+		req.ContentType = "application/octet-stream"
+		req.FileName = ""
+	}
+	zerolog.Ctx(ctx).Debug().Int64("size", size).Bool("encrypted", encrypt).Msg("Streaming file from Telegram to Matrix without a temporary file")
+	resp, err := asIntent.Matrix().UploadMedia(ctx, req)
+	if err != nil {
+		return "", nil, err
+	}
+	if file != nil {
+		// Closing fills in the hash of the encrypted file.
+		if err = encrypting.Close(); err != nil {
+			return "", nil, fmt.Errorf("failed to finish encrypting file: %w", err)
+		}
+		file.URL = resp.ContentURI.CUString()
+		return "", file, nil
+	}
+	return resp.ContentURI.CUString(), nil, nil
 }
 
 // defaultUploadSize is what bridgev2 assumes until it has fetched the homeserver's media config.

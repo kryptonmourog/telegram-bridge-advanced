@@ -329,7 +329,7 @@ func (t *ReadyTransferer) Transfer(ctx context.Context, db *store.Container, int
 	}
 
 	waitForMediaConfig(ctx, intent, int64(t.inner.fileInfo.Size))
-	streamTo := t.directUploadIntent(ctx, intent)
+	streamTo, encryptStream := t.directUploadIntent(ctx, intent)
 	if streamTo == nil {
 		// The size of documents is known before downloading, check that the file fits on the disk.
 		if err = checkTempDiskSpace(int64(t.inner.fileInfo.Size)); err != nil {
@@ -342,12 +342,13 @@ func (t *ReadyTransferer) Transfer(ctx context.Context, db *store.Container, int
 		return "", nil, nil, fmt.Errorf("downloading file failed: %w", err)
 	}
 	if streamTo != nil {
-		mxc, err = t.uploadDirectly(ctx, streamTo, reader)
+		mxc, encryptedFileInfo, err = t.uploadDirectly(ctx, streamTo, reader, encryptStream)
 		if err != nil {
 			return "", nil, &t.inner.fileInfo, fmt.Errorf("failed to upload media to Matrix: %w", err)
 		}
+		// Encrypted files have no plain mxc and aren't cached, like with bridgev2's upload.
 		t.cacheUploaded(ctx, db, locationID, mxc)
-		return mxc, nil, &t.inner.fileInfo, nil
+		return mxc, encryptedFileInfo, &t.inner.fileInfo, nil
 	}
 
 	needStickerConvert := t.expectedStickerConvertMime() != ""

@@ -74,8 +74,10 @@ func (tc *TelegramConnector) Start(ctx context.Context) error {
 }
 
 // matrixResponseTimeout is how long to wait for the homeserver's response once a request has been
-// sent, when matrix_request_timeout is set. It's the same as mautrix-go's default total timeout.
-const matrixResponseTimeout = 3 * time.Minute
+// sent, when matrix_request_timeout is set. Synapse answers an upload only after writing the whole
+// file to its media store, which took over 3 minutes for a 1.4 GB file on a busy server; the upload
+// was then cancelled and sent again forever.
+const matrixResponseTimeout = 15 * time.Minute
 
 // applyMatrixRequestTimeout replaces the total timeout of the appservice HTTP client, which every
 // Matrix client of the bridge shares, with matrix_request_timeout, and limits the wait for response
