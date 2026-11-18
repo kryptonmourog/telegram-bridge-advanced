@@ -19,6 +19,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -140,8 +141,9 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		return nil, err
 	}
 	// The rest of a chunked backfill comes as a catch-up resync, which bridgev2 limits to
-	// max_catchup_messages. Telegram returns the newest messages above the anchor, so a limit lower
-	// than what's left would leave a hole between the chunks. Allow as many as the initial backfill.
+	// max_catchup_messages. Telegram returns the newest messages above the anchor, so any limit lower
+	// than what's left (the rest of the initial backfill plus messages that came meanwhile) would leave
+	// a hole between the chunks. Fetch everything after the anchor: the loop below stops there.
 	continuingChunks := fetchParams.Forward && fetchParams.AnchorMessage != nil &&
 		fetchParams.Portal.Metadata.(*PortalMetadata).ChunkedBackfillPending
 	if fetchParams.Forward && tc.backfillSplitBytes() > 0 {
@@ -191,7 +193,7 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	}
 	limit := fetchParams.Count
 	if continuingChunks {
-		limit = max(limit, tc.main.Bridge.Config.Backfill.MaxInitialMessages)
+		limit = math.MaxInt
 	}
 	const chunkLimit = 100
 	makeReq := func() bin.Object {
