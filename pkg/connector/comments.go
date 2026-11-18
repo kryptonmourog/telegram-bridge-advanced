@@ -37,6 +37,7 @@ import (
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
 	"go.mau.fi/mautrix-telegram/pkg/connector/matrixfmt"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
+	"go.mau.fi/mautrix-telegram/pkg/gotd/tgerr"
 )
 
 // Comments of channel posts live in the channel's linked discussion group: every post is copied
@@ -62,6 +63,21 @@ type commentManager struct {
 }
 
 const commentPollInterval = 5 * time.Minute
+
+// commentAPICall makes a request for comments, waiting out flood waits. Comments are fetched in the
+// background for many posts in a row, and Telegram asks to slow down: without waiting, every following
+// post failed right away and its comments were never mirrored.
+func commentAPICall[U hasUpdates](ctx context.Context, tc *TelegramClient, fn func() (U, error)) (U, error) {
+	for attempt := 1; ; attempt++ {
+		resp, err := APICallWithUpdates(ctx, tc, fn)
+		if err == nil || attempt == 5 {
+			return resp, err
+		}
+		if retry, err := tgerr.FloodWait(ctx, err); !retry {
+			return resp, err
+		}
+	}
+}
 
 // commentRootID returns the copy of the post a group message comments on, or 0.
 func commentRootID(msg *tg.Message) int {
@@ -130,7 +146,7 @@ func (tc *TelegramClient) resolveCommentThread(ctx context.Context, groupID int6
 	if err != nil {
 		return nil, err
 	}
-	resp, err := APICallWithUpdates(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
+	resp, err := commentAPICall(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
 		res, err := tc.client.API().ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
 			Channel: channel,
 			ID:      []tg.InputMessageClass{&tg.InputMessageID{ID: copyID}},
@@ -172,7 +188,7 @@ func (tc *TelegramClient) commentThreadForPost(ctx context.Context, channelID in
 	if err != nil {
 		return nil, err
 	}
-	resp, err := APICallWithUpdates(ctx, tc, func() (*tg.MessagesDiscussionMessage, error) {
+	resp, err := commentAPICall(ctx, tc, func() (*tg.MessagesDiscussionMessage, error) {
 		return tc.client.API().MessagesGetDiscussionMessage(ctx, &tg.MessagesGetDiscussionMessageRequest{
 			Peer:  &tg.InputPeerChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash},
 			MsgID: postID,
@@ -228,7 +244,7 @@ func (tc *TelegramClient) isDiscussionGroup(ctx context.Context, groupID int64) 
 	}
 	result := false
 	if channel, err := tc.inputChannel(ctx, groupID); err == nil {
-		full, err := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
+		full, err := commentAPICall(ctx, tc, func() (*tg.MessagesChatFull, error) {
 			return tc.client.API().ChannelsGetFullChannel(ctx, channel)
 		})
 		if err != nil {
@@ -579,7 +595,7 @@ func (tc *TelegramClient) fetchPostComments(ctx context.Context, channelID int64
 	var comments []*tg.Message
 	offsetID := 0
 	for page := 0; page < 1000; page++ {
-		resp, err := APICallWithUpdates(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
+		resp, err := commentAPICall(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
 			res, err := tc.client.API().MessagesGetReplies(ctx, &tg.MessagesGetRepliesRequest{
 				Peer:     peer,
 				MsgID:    postID,
@@ -632,7 +648,7 @@ func (tc *TelegramClient) fetchPostComments(ctx context.Context, channelID int64
 
 // pollCommentEdits applies edits of the latest comments of a post that are already in Matrix.
 func (tc *TelegramClient) pollCommentEdits(ctx context.Context, peer *tg.InputPeerChannel, postID int) {
-	resp, err := APICallWithUpdates(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
+	resp, err := commentAPICall(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
 		res, err := tc.client.API().MessagesGetReplies(ctx, &tg.MessagesGetRepliesRequest{Peer: peer, MsgID: postID, Limit: 100})
 		if err != nil {
 			return nil, err
@@ -702,7 +718,7 @@ func (tc *TelegramClient) latestPostsWithComments(ctx context.Context, portal *b
 	if err != nil {
 		return nil, err
 	}
-	resp, err := APICallWithUpdates(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
+	resp, err := commentAPICall(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
 		res, err := tc.client.API().ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{Channel: channel, ID: inputIDs})
 		if err != nil {
 			return nil, err
