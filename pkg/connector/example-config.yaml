@@ -155,6 +155,13 @@ direct_media_scope: channels
 # sent to Matrix as soon as it's ready, so a room's history shows up while large videos are still
 # uploading instead of all at once at the end. 0 sends the whole backfill at once.
 backfill_split_media_mb: 0
+# How many messages to backfill into a new room, by chat type, instead of backfill.max_initial_messages.
+# Types: user (private chats), bot, saved (Saved Messages), normal_group, supergroup, topic (forum
+# topics), channel. A bot falls back to user and a topic to supergroup; types not listed use
+# backfill.max_initial_messages.
+max_initial_messages_override:
+    # user: 300
+    # saved: 1000
 # Files that aren't bridged: a notice with the file name, size and a link to Telegram is sent instead.
 # Each rule has a portal ID (e.g. channel:123, see the bridge database) and optionally a message ID
 # (e.g. 123.45) and/or a minimum size in megabytes.

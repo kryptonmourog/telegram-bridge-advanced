@@ -37,8 +37,9 @@ import (
 )
 
 var (
-	_ bridgev2.BackfillingNetworkAPI           = (*TelegramClient)(nil)
-	_ bridgev2.BackfillingNetworkAPIWithLimits = (*TelegramClient)(nil)
+	_ bridgev2.BackfillingNetworkAPI                 = (*TelegramClient)(nil)
+	_ bridgev2.BackfillingNetworkAPIWithLimits       = (*TelegramClient)(nil)
+	_ bridgev2.BackfillingNetworkAPIWithInitialLimit = (*TelegramClient)(nil)
 )
 
 // getTakeoutID blocks until the takeout ID is available.
@@ -482,4 +483,48 @@ func (tc *TelegramClient) GetBackfillMaxBatchCount(ctx context.Context, portal *
 		log.Error().Str("peer_type", string(peerType)).Msg("unknown peer type")
 		return 0
 	}
+}
+
+// GetInitialBackfillLimit returns how many messages to backfill into a new room of the portal, from
+// max_initial_messages_override by chat type, or -1 to use backfill.max_initial_messages.
+func (tc *TelegramClient) GetInitialBackfillLimit(ctx context.Context, portal *bridgev2.Portal) int {
+	limits := tc.main.Config.MaxInitialMessagesOverride
+	if len(limits) == 0 {
+		return -1
+	}
+	for _, chatType := range tc.backfillChatTypes(ctx, portal) {
+		if limit, ok := limits[chatType]; ok {
+			return limit
+		}
+	}
+	return -1
+}
+
+// backfillChatTypes returns the keys of max_initial_messages_override that apply to a portal, the most
+// specific first.
+func (tc *TelegramClient) backfillChatTypes(ctx context.Context, portal *bridgev2.Portal) []string {
+	peerType, chatID, topicID, err := ids.ParsePortalID(portal.ID)
+	if err != nil {
+		return nil
+	}
+	switch peerType {
+	case ids.PeerTypeUser:
+		if chatID == tc.telegramUserID {
+			return []string{"saved", "user"}
+		}
+		if ghost, err := tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(chatID)); err == nil && ghost != nil && ghost.IsBot {
+			return []string{"bot", "user"}
+		}
+		return []string{"user"}
+	case ids.PeerTypeChat:
+		return []string{"normal_group"}
+	case ids.PeerTypeChannel:
+		if topicID > 0 {
+			return []string{"topic", "supergroup"}
+		} else if portal.Metadata.(*PortalMetadata).IsSuperGroup {
+			return []string{"supergroup"}
+		}
+		return []string{"channel"}
+	}
+	return nil
 }
