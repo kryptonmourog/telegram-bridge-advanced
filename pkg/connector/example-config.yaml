@@ -158,10 +158,8 @@ backfill_split_media_mb: 0
 # How many messages to backfill into a new room, by chat type, instead of backfill.max_initial_messages.
 # Types: user (private chats), bot, saved (Saved Messages), normal_group, supergroup, topic (forum
 # topics), channel. A bot falls back to user and a topic to supergroup; types not listed use
-# backfill.max_initial_messages.
-max_initial_messages_override:
-    # user: 300
-    # saved: 1000
+# backfill.max_initial_messages. For example: {user: 300, saved: 1000}
+max_initial_messages_override: {}
 # Give every user their own room of a broadcast channel, like private chats, instead of one room shared
 # by all users subscribed to it. Supergroups and forums stay shared, basic groups are per user anyway.
 # Changing this doesn't move existing channel rooms: users get new rooms next to the old ones, so only
