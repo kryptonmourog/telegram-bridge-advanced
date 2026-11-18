@@ -537,10 +537,11 @@ func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2
 	if err != nil {
 		return nil, err
 	}
-	if pressed, err := tc.maybePressButtonByReply(ctx, msg); pressed {
+	// A reply in a comment thread is a comment, even if the post has buttons.
+	if sent, err := tc.maybeSendComment(ctx, msg); sent {
 		return nil, err
 	}
-	if sent, err := tc.maybeSendComment(ctx, msg); sent {
+	if pressed, err := tc.maybePressButtonByReply(ctx, msg); pressed {
 		return nil, err
 	}
 
