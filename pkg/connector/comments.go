@@ -24,11 +24,13 @@ import (
 	"fmt"
 	"html"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/ptr"
+	"golang.org/x/sync/singleflight"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/matrix"
@@ -59,7 +61,9 @@ type commentManager struct {
 	// lastPoll throttles polling per channel room.
 	lastPoll map[id.RoomID]time.Time
 	// discussionGroups caches whether a supergroup is the discussion group of a channel.
-	discussionGroups map[int64]bool
+	discussionGroups map[int64]discussionGroupState
+	// discussionChecks runs one check per group at a time.
+	discussionChecks singleflight.Group
 	// openRooms are channel rooms already checked to let commenters post.
 	openRooms map[id.RoomID]struct{}
 }
@@ -235,40 +239,63 @@ func (tc *TelegramClient) handleGroupMessageForComments(ctx context.Context, msg
 	}
 }
 
+// discussionGroupState is what's known about a supergroup being a discussion group.
+type discussionGroupState struct {
+	isDiscussion bool
+	// retryAt is when to check again after the check failed, zero once it's known.
+	retryAt time.Time
+}
+
+// discussionCheckRetry is how long a failed check is not repeated. Replies in a busy group would
+// otherwise check it again for every message and run the account into flood waits.
+const discussionCheckRetry = 10 * time.Minute
+
 // isDiscussionGroup reports whether a supergroup is linked to a channel as its discussion group.
 // It's asked once per group and run, so that replies in ordinary groups cost no extra requests.
 func (tc *TelegramClient) isDiscussionGroup(ctx context.Context, groupID int64) bool {
 	tc.comments.lock.Lock()
-	known, ok := tc.comments.discussionGroups[groupID]
+	state, ok := tc.comments.discussionGroups[groupID]
 	tc.comments.lock.Unlock()
-	if ok {
-		return known
+	if ok && (state.retryAt.IsZero() || time.Now().Before(state.retryAt)) {
+		return state.isDiscussion
 	}
-	result := false
-	if channel, err := tc.inputChannel(ctx, groupID); err == nil {
-		full, err := commentAPICall(ctx, tc, func() (*tg.MessagesChatFull, error) {
-			return tc.client.API().ChannelsGetFullChannel(ctx, channel)
-		})
-		if err != nil {
+	result, _, _ := tc.comments.discussionChecks.Do(strconv.FormatInt(groupID, 10), func() (any, error) {
+		state := discussionGroupState{}
+		var err error
+		if state.isDiscussion, err = tc.fetchIsDiscussionGroup(ctx, groupID); err != nil {
 			zerolog.Ctx(ctx).Warn().Err(err).Int64("group_id", groupID).Msg("Failed to check if group is a discussion group")
-			return false
+			state.retryAt = time.Now().Add(discussionCheckRetry)
 		}
-		channelFull, okFull := full.FullChat.(*tg.ChannelFull)
-		megagroup := false
-		for _, c := range full.Chats {
-			if ch, ok := c.(*tg.Channel); ok && ch.ID == groupID {
-				megagroup = ch.Megagroup
-			}
+		tc.comments.lock.Lock()
+		if tc.comments.discussionGroups == nil {
+			tc.comments.discussionGroups = make(map[int64]discussionGroupState)
 		}
-		result = okFull && megagroup && channelFull.LinkedChatID != 0
+		tc.comments.discussionGroups[groupID] = state
+		tc.comments.lock.Unlock()
+		return state.isDiscussion, nil
+	})
+	return result.(bool)
+}
+
+func (tc *TelegramClient) fetchIsDiscussionGroup(ctx context.Context, groupID int64) (bool, error) {
+	channel, err := tc.inputChannel(ctx, groupID)
+	if err != nil {
+		return false, err
 	}
-	tc.comments.lock.Lock()
-	if tc.comments.discussionGroups == nil {
-		tc.comments.discussionGroups = make(map[int64]bool)
+	full, err := commentAPICall(ctx, tc, func() (*tg.MessagesChatFull, error) {
+		return tc.client.API().ChannelsGetFullChannel(ctx, channel)
+	})
+	if err != nil {
+		return false, err
 	}
-	tc.comments.discussionGroups[groupID] = result
-	tc.comments.lock.Unlock()
-	return result
+	channelFull, okFull := full.FullChat.(*tg.ChannelFull)
+	megagroup := false
+	for _, c := range full.Chats {
+		if ch, ok := c.(*tg.Channel); ok && ch.ID == groupID {
+			megagroup = ch.Megagroup
+		}
+	}
+	return okFull && megagroup && channelFull.LinkedChatID != 0, nil
 }
 
 // ensureCommentsAllowed lowers events_default of a channel room so that commenters can post threads.
