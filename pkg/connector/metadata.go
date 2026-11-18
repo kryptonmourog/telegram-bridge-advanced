@@ -61,6 +61,8 @@ type PortalMetadata struct {
 	ChunkedBackfillPending bool `json:"chunked_backfill_pending,omitempty"`
 	// CommentsSynced is set once the comments of the latest posts of a channel were fetched.
 	CommentsSynced bool `json:"comments_synced,omitempty"`
+	// CommentGhostsRemoved is set once the ghosts of comment authors have left the channel room.
+	CommentGhostsRemoved bool `json:"fork_comment_ghosts_removed,omitempty"`
 	// Settings are the user's settings of this room (see roomsettings.go).
 	Settings *RoomSettings `json:"fork_settings,omitempty"`
 

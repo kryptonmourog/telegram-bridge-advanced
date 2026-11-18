@@ -356,18 +356,39 @@ func (tc *TelegramClient) commentSender(ctx context.Context, portal *bridgev2.Po
 	return commenter.Intent, author, nil
 }
 
-// mirrorSentByCommenter reports whether a mirrored comment was sent by the commenter account.
-func (tc *TelegramClient) mirrorSentByCommenter(ctx context.Context, mirror *commentMirror) bool {
+// mirrorSentByAuthor reports whether a mirrored comment was sent by the author's ghost, which
+// comments mirrored before the commenter account was used were.
+func (tc *TelegramClient) mirrorSentByAuthor(ctx context.Context, mirror *commentMirror) bool {
 	bot, ok := tc.main.Bridge.Bot.(*matrix.ASIntent)
 	if !ok {
-		return true
+		return false
 	}
 	evt, err := bot.Matrix().GetEvent(ctx, mirror.RoomID, mirror.EventID)
 	if err != nil {
-		return true
+		return false
 	}
-	commenter, err := tc.main.Bridge.GetGhostByID(ctx, commenterGhostID)
-	return err == nil && commenter != nil && evt.Sender == commenter.Intent.GetMXID()
+	ghostID, isGhost := tc.main.Bridge.Matrix.ParseGhostMXID(evt.Sender)
+	return isGhost && ghostID != commenterGhostID
+}
+
+// replaceAuthorSentComment replaces a comment sent by the author's ghost with one sent by the
+// commenter account, with the edit applied.
+func (tc *TelegramClient) replaceAuthorSentComment(ctx context.Context, groupID int64, mirror *commentMirror, msg *tg.Message) {
+	tc.comments.lock.Lock()
+	current, err := tc.getCommentMirror(ctx, groupID, msg.ID)
+	if err == nil && current != nil && current.EventID == mirror.EventID {
+		err = tc.deleteCommentMirror(ctx, groupID, msg.ID)
+	}
+	tc.comments.lock.Unlock()
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to replace edited comment")
+		return
+	}
+	tc.redactAsBot(ctx, mirror.RoomID, mirror.EventID, "comment edited")
+	// Mirrors the comment again unless a concurrent edit already did.
+	if err = tc.mirrorComment(ctx, groupID, msg); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to mirror edited comment")
+	}
 }
 
 // readCommentThread marks a comment thread read for the user. Like in Telegram, comments under
@@ -499,20 +520,16 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 	if err != nil || portal == nil {
 		return
 	}
-	// The edit has to come from whoever sent the comment: the author's ghost for comments mirrored
-	// before the commenter account was used, the commenter account otherwise.
-	sender := tc.getEventSender(msg, false)
-	var intent bridgev2.MatrixAPI
-	var author *commentAuthor
-	if tc.mirrorSentByCommenter(ctx, mirror) {
-		if intent, author, err = tc.commentSender(ctx, portal, sender); err != nil || intent == nil {
-			return
-		}
-	} else {
-		var ok bool
-		if intent, ok = portal.GetIntentFor(ctx, sender, tc.userLogin, bridgev2.RemoteEventEdit); !ok {
-			return
-		}
+	if tc.mirrorSentByAuthor(ctx, mirror) {
+		// Comments mirrored before the commenter account was used were sent by the author's ghost.
+		// Only the sender can edit a message, and the ghost has left the room (see
+		// removeCommentGhosts), so the comment is replaced instead.
+		tc.replaceAuthorSentComment(ctx, group.ChannelID, mirror, msg)
+		return
+	}
+	intent, author, err := tc.commentSender(ctx, portal, tc.getEventSender(msg, false))
+	if err != nil || intent == nil {
+		return
 	}
 	converted, err := tc.convertToMatrix(ctx, portal, intent, msg)
 	if err != nil || len(converted.Parts) == 0 {
@@ -765,10 +782,73 @@ func (tc *TelegramClient) readExistingCommentThreads(ctx context.Context) {
 	zerolog.Ctx(ctx).Info().Int("threads", len(threads)).Msg("Marked existing comment threads read")
 }
 
+// removeCommentGhosts makes the ghosts of comment authors leave channel rooms, once per room.
+// Comments were sent by the authors' ghosts before the commenter account was used, and the ghosts
+// stayed in the room: hundreds in big channels, each name or avatar change of theirs showing up in
+// the room. Posts of a channel are always sent by the channel's ghost, no other ghost needs to stay.
+func (tc *TelegramClient) removeCommentGhosts(ctx context.Context) {
+	log := zerolog.Ctx(ctx)
+	bot, ok := tc.main.Bridge.Bot.(*matrix.ASIntent)
+	if !ok {
+		return
+	}
+	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to get portals to remove comment authors from")
+		return
+	}
+	for _, up := range userPortals {
+		portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, up.Portal)
+		if err != nil || portal == nil || portal.MXID == "" {
+			continue
+		}
+		channelID, ok := tc.isBroadcastPortal(portal)
+		meta := portal.Metadata.(*PortalMetadata)
+		if !ok || meta.CommentGhostsRemoved {
+			continue
+		}
+		members, err := bot.Matrix().JoinedMembers(ctx, portal.MXID)
+		if err != nil {
+			log.Err(err).Stringer("room_id", portal.MXID).Msg("Failed to get members to remove comment authors")
+			continue
+		}
+		removed, failed := 0, false
+		for userID := range members.Joined {
+			ghostID, isGhost := tc.main.Bridge.Matrix.ParseGhostMXID(userID)
+			if !isGhost || ghostID == commenterGhostID || ghostID == ids.MakeChannelUserID(channelID) {
+				continue
+			}
+			if _, err = bot.Connector.AS.Intent(userID).LeaveRoom(ctx, portal.MXID); err != nil {
+				log.Err(err).Stringer("user_id", userID).Stringer("room_id", portal.MXID).Msg("Failed to remove comment author from channel room")
+				failed = true
+				continue
+			}
+			removed++
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
+		}
+		if failed {
+			// Try again on the next start.
+			continue
+		}
+		meta.CommentGhostsRemoved = true
+		if err = portal.Save(ctx); err != nil {
+			log.Err(err).Msg("Failed to save comment author removal state")
+		}
+		if removed > 0 {
+			log.Info().Stringer("room_id", portal.MXID).Int("ghosts", removed).Msg("Removed comment authors from channel room")
+		}
+	}
+}
+
 // syncExistingComments fetches the comments of channel rooms bridged before comments were mirrored,
 // once per room.
 func (tc *TelegramClient) syncExistingComments(ctx context.Context) {
 	tc.readExistingCommentThreads(ctx)
+	tc.removeCommentGhosts(ctx)
 	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get portals to sync comments")
