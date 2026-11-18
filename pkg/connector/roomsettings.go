@@ -182,7 +182,8 @@ func fnSettings(ce *commands.Event) {
 	}
 	if wasPaused && !settings.Paused {
 		client.resyncWithBackfill(ce.Portal.PortalKey, false)
-		ce.Reply("Bridging resumed, messages sent meanwhile are being caught up.")
+		// Catching up is bridgev2's: it brings the newest max_catchup_messages, older ones stay out.
+		ce.Reply("Bridging resumed, the last %d messages sent meanwhile are being caught up.", ce.Bridge.Config.Backfill.MaxCatchupMessages)
 		return
 	}
 	ce.Reply("Saved. %s", client.describeRoomSettings(ce, settings, isChannel))
