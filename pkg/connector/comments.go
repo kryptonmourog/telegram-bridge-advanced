@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/util/ptr"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -532,6 +534,11 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment edit date")
 		}
 	}()
+	tc.updateMirroredComment(ctx, group.ChannelID, mirror, msg, time.Unix(int64(msg.EditDate), 0))
+}
+
+// updateMirroredComment replaces the content of a mirrored comment with the current one of msg.
+func (tc *TelegramClient) updateMirroredComment(ctx context.Context, groupID int64, mirror *commentMirror, msg *tg.Message, ts time.Time) {
 	portal, err := tc.main.Bridge.GetPortalByMXID(ctx, mirror.RoomID)
 	if err != nil || portal == nil {
 		return
@@ -540,7 +547,7 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 		// Comments mirrored before the commenter account was used were sent by the author's ghost.
 		// Only the sender can edit a message, and the ghost has left the room (see
 		// removeCommentGhosts), so the comment is replaced instead.
-		tc.replaceAuthorSentComment(ctx, group.ChannelID, mirror, msg)
+		tc.replaceAuthorSentComment(ctx, groupID, mirror, msg)
 		return
 	}
 	intent, author, err := tc.commentSender(ctx, portal, tc.getEventSender(msg, false))
@@ -557,7 +564,7 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 	author.addTo(content)
 	content.SetEdit(mirror.EventID)
 	if _, err = intent.SendMessage(ctx, portal.MXID, event.EventMessage, &event.Content{Parsed: content},
-		&bridgev2.MatrixSendExtra{Timestamp: time.Unix(int64(msg.EditDate), 0)}); err != nil {
+		&bridgev2.MatrixSendExtra{Timestamp: ts}); err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to edit mirrored comment")
 	}
 }
@@ -860,11 +867,152 @@ func (tc *TelegramClient) removeCommentGhosts(ctx context.Context) {
 	}
 }
 
+// fixCommentMedia corrects links to media of comments mirrored before the links named the chat the
+// comment is in, once per channel room. They named the channel with the comment's message ID in the
+// discussion group, so the media couldn't be downloaded. The comments get their media again by an
+// edit (or are sent again if the author's ghost sent them).
+func (tc *TelegramClient) fixCommentMedia(ctx context.Context) {
+	log := zerolog.Ctx(ctx)
+	bot, ok := tc.main.Bridge.Bot.(*matrix.ASIntent)
+	if !ok || !tc.main.useDirectMedia {
+		return
+	}
+	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to get portals to fix comment media")
+		return
+	}
+	for _, up := range userPortals {
+		portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, up.Portal)
+		if err != nil || portal == nil || portal.MXID == "" {
+			continue
+		}
+		channelID, ok := tc.isBroadcastPortal(portal)
+		meta := portal.Metadata.(*PortalMetadata)
+		if !ok || meta.CommentMediaFixed {
+			continue
+		}
+		broken, err := tc.findBrokenCommentMedia(ctx, bot, portal.MXID, channelID)
+		if err != nil {
+			log.Err(err).Stringer("room_id", portal.MXID).Msg("Failed to find comment media to fix")
+			continue
+		}
+		fixed, failed := 0, false
+		for groupID, mirrors := range broken {
+			n, err := tc.refreshComments(ctx, groupID, mirrors)
+			fixed += n
+			if err != nil {
+				log.Err(err).Int64("group_id", groupID).Msg("Failed to fix comment media")
+				failed = true
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+		if failed {
+			// Try again on the next start.
+			continue
+		}
+		meta.CommentMediaFixed = true
+		if err = portal.Save(ctx); err != nil {
+			log.Err(err).Msg("Failed to save comment media fix state")
+		}
+		if fixed > 0 {
+			log.Info().Stringer("room_id", portal.MXID).Int("comments", fixed).Msg("Fixed media links of comments")
+		}
+	}
+}
+
+// findBrokenCommentMedia returns the mirrored comments of a channel room whose media link names the
+// channel instead of the discussion group, by group.
+func (tc *TelegramClient) findBrokenCommentMedia(ctx context.Context, bot *matrix.ASIntent, room id.RoomID, channelID int64) (map[int64][]*commentMirror, error) {
+	broken := make(map[int64][]*commentMirror)
+	filter := &mautrix.FilterPart{ContainsURL: ptr.Ptr(true)}
+	from := ""
+	for {
+		resp, err := bot.Matrix().Messages(ctx, room, from, "", mautrix.DirectionBackward, filter, 500)
+		if err != nil {
+			return nil, err
+		}
+		for _, evt := range resp.Chunk {
+			mirror, err := tc.getCommentMirrorByEvent(ctx, evt.ID)
+			if err != nil {
+				return nil, err
+			} else if mirror == nil {
+				continue
+			}
+			if err = evt.Content.ParseRaw(evt.Type); err != nil {
+				continue
+			}
+			content, ok := evt.Content.Parsed.(*event.MessageEventContent)
+			if !ok {
+				continue
+			}
+			url := content.URL
+			if content.File != nil {
+				url = content.File.URL
+			}
+			mediaID, err := bot.Connector.ParseContentURI(ctx, url)
+			if err != nil {
+				continue
+			}
+			info, err := ids.ParseDirectMediaInfo(mediaID)
+			if err == nil && info.PeerType == ids.PeerTypeChannel && info.PeerID == channelID && info.PeerID != mirror.GroupID {
+				broken[mirror.GroupID] = append(broken[mirror.GroupID], mirror)
+			}
+		}
+		if resp.End == "" || len(resp.Chunk) == 0 {
+			return broken, nil
+		}
+		from = resp.End
+	}
+}
+
+// refreshComments fetches comments from the discussion group and updates their mirrors.
+func (tc *TelegramClient) refreshComments(ctx context.Context, groupID int64, mirrors []*commentMirror) (int, error) {
+	channel, err := tc.inputChannel(ctx, groupID)
+	if err != nil {
+		return 0, err
+	}
+	updated := 0
+	for batch := range slices.Chunk(mirrors, 100) {
+		byID := make(map[int]*commentMirror, len(batch))
+		inputIDs := make([]tg.InputMessageClass, 0, len(batch))
+		for _, mirror := range batch {
+			byID[mirror.MsgID] = mirror
+			inputIDs = append(inputIDs, &tg.InputMessageID{ID: mirror.MsgID})
+		}
+		resp, err := commentAPICall(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
+			res, err := tc.client.API().ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{Channel: channel, ID: inputIDs})
+			if err != nil {
+				return nil, err
+			}
+			modified, ok := res.AsModified()
+			if !ok {
+				return nil, fmt.Errorf("unexpected response type %T", res)
+			}
+			return modified, nil
+		})
+		if err != nil {
+			return updated, err
+		}
+		for _, m := range resp.GetMessages() {
+			// Deleted comments come back empty, their mirrors are removed with the deletion.
+			if msg, ok := m.(*tg.Message); ok && byID[msg.ID] != nil {
+				tc.updateMirroredComment(ctx, groupID, byID[msg.ID], msg, time.Now())
+				updated++
+			}
+		}
+	}
+	return updated, nil
+}
+
 // syncExistingComments fetches the comments of channel rooms bridged before comments were mirrored,
 // once per room.
 func (tc *TelegramClient) syncExistingComments(ctx context.Context) {
 	tc.readExistingCommentThreads(ctx)
 	tc.removeCommentGhosts(ctx)
+	tc.fixCommentMedia(ctx)
 	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to get portals to sync comments")

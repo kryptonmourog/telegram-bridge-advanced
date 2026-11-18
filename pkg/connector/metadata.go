@@ -63,6 +63,8 @@ type PortalMetadata struct {
 	CommentsSynced bool `json:"comments_synced,omitempty"`
 	// CommentGhostsRemoved is set once the ghosts of comment authors have left the channel room.
 	CommentGhostsRemoved bool `json:"fork_comment_ghosts_removed,omitempty"`
+	// CommentMediaFixed is set once links to media of mirrored comments point at the discussion group.
+	CommentMediaFixed bool `json:"fork_comment_media_fixed,omitempty"`
 	// Settings are the user's settings of this room (see roomsettings.go).
 	Settings *RoomSettings `json:"fork_settings,omitempty"`
 
