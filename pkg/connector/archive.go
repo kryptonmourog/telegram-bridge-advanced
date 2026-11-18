@@ -343,10 +343,12 @@ func parseFolderPeerID(peerID string) (ids.PeerType, int64, error) {
 
 // queueRemoteEvent queues an event from Telegram, dropping events of archived chats while the
 // archive isn't bridged: bridgev2 brings the user back into a portal's room for any event of it
-// (an edit or reaction in a hidden archived channel made its room reappear).
+// (an edit or reaction in a hidden archived channel made its room reappear). Deleting the chat
+// isn't dropped: it only removes the room, and the room of a chat the user left mustn't stay.
 func (tc *TelegramClient) queueRemoteEvent(evt bridgev2.RemoteEvent) bridgev2.EventHandlingResult {
 	if key := evt.GetPortalKey(); key.ID != "" {
-		if peerType, chatID, _, err := ids.ParsePortalID(key.ID); err == nil && tc.folderSpaces.skipArchivedPeer(peerForID(peerType, chatID)) {
+		if peerType, chatID, _, err := ids.ParsePortalID(key.ID); err == nil &&
+			evt.GetType() != bridgev2.RemoteEventChatDelete && tc.folderSpaces.skipArchivedPeer(peerForID(peerType, chatID)) {
 			return bridgev2.EventHandlingResultIgnored
 		}
 		if pausableEvents[evt.GetType()] && tc.isPausedPortal(context.Background(), key) {
