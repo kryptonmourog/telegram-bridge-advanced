@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.mau.fi/util/dbutil"
@@ -40,6 +41,8 @@ type TelegramConnector struct {
 
 	useDirectMedia bool
 	maxFileSize    int64
+	// channelKinds caches whether channel IDs are broadcast channels (see channelkind.go).
+	channelKinds sync.Map
 }
 
 var _ bridgev2.NetworkConnector = (*TelegramConnector)(nil)

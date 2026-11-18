@@ -105,6 +105,7 @@ type TelegramConfig struct {
 	DirectMediaScope                     string              `yaml:"direct_media_scope"`
 	BackfillSplitMediaMB                 int64               `yaml:"backfill_split_media_mb"`
 	MaxInitialMessagesOverride           map[string]int      `yaml:"max_initial_messages_override"`
+	PersonalChannels                     bool                `yaml:"personal_channels"`
 	SkipMedia                            []SkipMediaRule     `yaml:"skip_media"`
 	BridgeCommunities                    bool                `yaml:"bridge_communities"`
 	ExtEvPolls                           bool                `yaml:"extev_polls"`
@@ -249,6 +250,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Str, "direct_media_scope")
 	helper.Copy(up.Int, "backfill_split_media_mb")
 	helper.Copy(up.Map, "max_initial_messages_override")
+	helper.Copy(up.Bool, "personal_channels")
 	helper.Copy(up.List, "skip_media")
 	helper.Copy(up.Bool, "bridge_communities")
 	helper.Copy(up.Bool, "extev_polls")

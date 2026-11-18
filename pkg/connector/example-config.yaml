@@ -162,6 +162,11 @@ backfill_split_media_mb: 0
 max_initial_messages_override:
     # user: 300
     # saved: 1000
+# Give every user their own room of a broadcast channel, like private chats, instead of one room shared
+# by all users subscribed to it. Supergroups and forums stay shared, basic groups are per user anyway.
+# Changing this doesn't move existing channel rooms: users get new rooms next to the old ones, so only
+# change it before channels are bridged (or after deleting their rooms).
+personal_channels: false
 # Files that aren't bridged: a notice with the file name, size and a link to Telegram is sent instead.
 # Each rule has a portal ID (e.g. channel:123, see the bridge database) and optionally a message ID
 # (e.g. 123.45) and/or a minimum size in megabytes.

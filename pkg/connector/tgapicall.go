@@ -51,10 +51,13 @@ func handleUserUpdates[U hasUserUpdates](ctx context.Context, t *TelegramClient,
 
 func handleChatUpdates[U hasChatUpdates](ctx context.Context, t *TelegramClient, resp hasChatUpdates) error {
 	for _, c := range resp.GetChats() {
-		if channel, ok := c.(*tg.Channel); ok {
+		switch channel := c.(type) {
+		case *tg.Channel:
 			if _, err := t.updateChannel(ctx, channel); err != nil {
 				return err
 			}
+		case *tg.ChannelForbidden:
+			t.main.setChannelKind(ctx, channel.ID, channel.Broadcast)
 		}
 	}
 	return nil

@@ -1008,6 +1008,7 @@ func (tc *TelegramClient) updateGhost(ctx context.Context, userID int64, user *t
 }
 
 func (tc *TelegramClient) updateChannel(ctx context.Context, channel *tg.Channel) (*bridgev2.UserInfo, error) {
+	tc.main.setChannelKind(ctx, channel.ID, channel.Broadcast)
 	// TODO resync portal metadata?
 	userInfo, err := tc.wrapChannelGhostInfo(ctx, channel)
 	if err != nil {

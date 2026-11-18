@@ -17,6 +17,8 @@
 package connector
 
 import (
+	"context"
+
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
@@ -25,6 +27,9 @@ import (
 
 func (tc *TelegramClient) makePortalKeyFromPeer(peer tg.PeerClass, topicID int) networkid.PortalKey {
 	key := ids.InternalPeerToPortalKey(peer, topicID, tc.loginID)
+	if channel, ok := peer.(*tg.PeerChannel); ok {
+		tc.setPersonalChannelReceiver(&key, channel.ChannelID)
+	}
 	if tc.main.Bridge.Config.SplitPortals {
 		key.Receiver = tc.userLogin.ID
 	}
@@ -33,8 +38,19 @@ func (tc *TelegramClient) makePortalKeyFromPeer(peer tg.PeerClass, topicID int) 
 
 func (tc *TelegramClient) makePortalKeyFromID(peerType ids.PeerType, chatID int64, topicID int) networkid.PortalKey {
 	key := ids.InternalMakePortalKey(peerType, chatID, topicID, tc.loginID)
+	if peerType == ids.PeerTypeChannel {
+		tc.setPersonalChannelReceiver(&key, chatID)
+	}
 	if tc.main.Bridge.Config.SplitPortals {
 		key.Receiver = tc.userLogin.ID
 	}
 	return key
+}
+
+// setPersonalChannelReceiver makes the portal of a broadcast channel the user's own with
+// personal_channels (see channelkind.go).
+func (tc *TelegramClient) setPersonalChannelReceiver(key *networkid.PortalKey, channelID int64) {
+	if tc.main.Config.PersonalChannels && tc.isBroadcastChannel(tc.userLogin.Log.WithContext(context.Background()), channelID) {
+		key.Receiver = tc.userLogin.ID
+	}
 }

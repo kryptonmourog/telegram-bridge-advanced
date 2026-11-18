@@ -363,7 +363,8 @@ func (tc *TelegramClient) commentSender(ctx context.Context, portal *bridgev2.Po
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get commenter account: %w", err)
 	}
-	name, ok := commenterNames[tc.folderSpaces.language()]
+	// The account is shared by all users, its name is in the bridge's language rather than the user's.
+	name, ok := commenterNames[tc.main.Config.FolderSpaces.DefaultLanguage]
 	if !ok {
 		name = commenterNames["en"]
 	}
