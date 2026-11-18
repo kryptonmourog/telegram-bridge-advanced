@@ -324,7 +324,11 @@ func (fs *folderSpaceManager) SetArchive(ctx context.Context, enabled bool) (cre
 		fs.tc.resyncWithBackfill(key, true)
 		created++
 		// Spread the room creations a bit, they're heavy on both Telegram and the homeserver.
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return created, ctx.Err()
+		}
 	}
 	return created, nil
 }

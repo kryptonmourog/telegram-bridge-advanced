@@ -798,7 +798,11 @@ func (tc *TelegramClient) syncExistingComments(ctx context.Context) {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment sync state")
 		}
 		// Spread the work, every channel is a few requests.
-		time.Sleep(2 * time.Second)
+		select {
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
