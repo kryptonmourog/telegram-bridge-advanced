@@ -3,9 +3,11 @@ package downloader
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/go-faster/errors"
 
+	"go.mau.fi/mautrix-telegram/pkg/gotd/pool"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tgerr"
 )
@@ -87,8 +89,23 @@ func (r *reader) nextPlain(ctx context.Context) (block, error) {
 	return r.next(ctx, offset, r.partSize)
 }
 
+// connectionRetries is how many times a part is requested again after the connection it was requested
+// on broke. A file is downloaded part by part, so a large one doesn't have to start over.
+const connectionRetries = 5
+
+// isConnectionError reports whether a request failed because its connection broke rather than
+// because the request itself failed or was cancelled.
+func isConnectionError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	// A closed engine cancels its requests while the caller's context is still alive.
+	return errors.Is(err, pool.ErrConnDead) || errors.Is(err, context.Canceled)
+}
+
 func (r *reader) next(ctx context.Context, offset int64, limit int) (block, error) {
 	floodOrTimeoutRetries := 0
+	connRetries := 0
 	for {
 		ch, err := r.sch.Chunk(ctx, offset, limit)
 
@@ -96,6 +113,15 @@ func (r *reader) next(ctx context.Context, offset int64, limit int) (block, erro
 			if (flood || tgerr.Is(err, tg.ErrTimeout)) && floodOrTimeoutRetries < 10 {
 				floodOrTimeoutRetries++
 				continue
+			}
+			if isConnectionError(ctx, err) && connRetries < connectionRetries {
+				connRetries++
+				select {
+				case <-time.After(time.Duration(connRetries) * time.Second):
+					continue
+				case <-ctx.Done():
+					return block{}, errors.Wrap(ctx.Err(), "get next chunk")
+				}
 			}
 			return block{}, errors.Wrap(err, "get next chunk")
 		}
