@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix"
@@ -52,9 +51,9 @@ func (t *ReadyTransferer) directUploadIntent(ctx context.Context, intent bridgev
 		strings.HasPrefix(t.inner.fileInfo.MimeType, "image/") {
 		return nil
 	}
+	// The same check bridgev2's upload uses, which also covers encryption.require.
 	if t.inner.roomID != "" {
-		encrypted, err := asIntent.Connector.StateStore.IsEncrypted(ctx, t.inner.roomID)
-		if err != nil || encrypted {
+		if encrypted, err := asIntent.Connector.IsRoomEncrypted(ctx, t.inner.roomID); err != nil || encrypted {
 			return nil
 		}
 	}
@@ -82,20 +81,14 @@ func (t *ReadyTransferer) uploadDirectly(ctx context.Context, asIntent *matrix.A
 // defaultUploadSize is what bridgev2 assumes until it has fetched the homeserver's media config.
 const defaultUploadSize = 50 * 1024 * 1024
 
-// waitForMediaConfig waits a little for bridgev2 to fetch the homeserver's upload limit. It's fetched
-// in the background on startup, and until then files over 50 MB were rejected as too large even if
-// the homeserver accepts them (backfill starts right away).
+// waitForMediaConfig waits for bridgev2 to fetch the homeserver's upload limit. It's fetched in the
+// background on startup, and until then files over 50 MB would be rejected as too large even if the
+// homeserver accepts them (backfill starts right away). Smaller files fit the default anyway.
 func waitForMediaConfig(ctx context.Context, intent bridgev2.MatrixAPI, size int64) {
 	asIntent, ok := intent.(*matrix.ASIntent)
 	if !ok || asIntent.Connector == nil || size <= defaultUploadSize {
 		return
 	}
-	deadline := time.Now().Add(15 * time.Second)
-	for asIntent.Connector.MediaConfig.UploadSize == defaultUploadSize && time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
+	// A cancelled context fails the transfer right after this anyway.
+	_ = asIntent.Connector.WaitForMediaConfig(ctx)
 }
