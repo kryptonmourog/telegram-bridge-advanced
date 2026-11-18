@@ -59,32 +59,6 @@ const (
 	pollResultsDelay = 15 * time.Second
 )
 
-// A poll can be in several messages: a channel post and its copy in the discussion group share it.
-var pollSchema = []string{
-	`DROP TABLE IF EXISTS fork_poll`,
-	`CREATE TABLE IF NOT EXISTS fork_poll_message (
-		login_id   TEXT   NOT NULL,
-		portal_id  TEXT   NOT NULL,
-		receiver   TEXT   NOT NULL,
-		msg_id     BIGINT NOT NULL,
-		poll_id    BIGINT NOT NULL,
-		poll       TEXT   NOT NULL,
-		answer_map TEXT   NOT NULL DEFAULT '',
-		own_vote   TEXT   NOT NULL DEFAULT '',
-		PRIMARY KEY (login_id, portal_id, receiver, msg_id)
-	)`,
-	`CREATE INDEX IF NOT EXISTS fork_poll_message_poll_idx ON fork_poll_message (login_id, poll_id)`,
-}
-
-func (tc *TelegramConnector) createPollTables(ctx context.Context) error {
-	for _, q := range pollSchema {
-		if _, err := tc.Store.Exec(ctx, q); err != nil {
-			return fmt.Errorf("failed to create poll tables: %w", err)
-		}
-	}
-	return nil
-}
-
 // storedPoll is what's needed to render a poll's results when an update doesn't include the poll.
 type storedPoll struct {
 	Question string         `json:"question"`

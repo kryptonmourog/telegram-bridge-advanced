@@ -393,9 +393,9 @@ func (tc *TelegramClient) mirrorSentByAuthor(ctx context.Context, mirror *commen
 // commenter account, with the edit applied.
 func (tc *TelegramClient) replaceAuthorSentComment(ctx context.Context, groupID int64, mirror *commentMirror, msg *tg.Message) {
 	tc.comments.lock.Lock()
-	current, err := tc.getCommentMirror(ctx, groupID, msg.ID)
+	current, err := tc.getCommentMirror(ctx, mirror.RoomID, groupID, msg.ID)
 	if err == nil && current != nil && current.EventID == mirror.EventID {
-		err = tc.deleteCommentMirror(ctx, groupID, msg.ID)
+		err = tc.deleteCommentMirror(ctx, mirror.RoomID, groupID, msg.ID)
 	}
 	tc.comments.lock.Unlock()
 	if err != nil {
@@ -435,14 +435,14 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 	}
 	tc.comments.lock.Lock()
 	defer tc.comments.lock.Unlock()
-	if existing, err := tc.getCommentMirror(ctx, groupID, msg.ID); err != nil || existing != nil {
-		return err
-	}
 	if tc.folderSpaces.skipArchivedPeer(&tg.PeerChannel{ChannelID: thread.ChannelID}) {
 		return nil
 	}
 	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, tc.makePortalKeyFromID(ids.PeerTypeChannel, thread.ChannelID, 0))
 	if err != nil || portal == nil || portal.MXID == "" {
+		return err
+	}
+	if existing, err := tc.getCommentMirror(ctx, portal.MXID, groupID, msg.ID); err != nil || existing != nil {
 		return err
 	}
 	post, err := tc.main.Bridge.DB.Message.GetFirstPartByID(ctx, portal.Receiver, ids.MakeMessageID(&tg.PeerChannel{ChannelID: thread.ChannelID}, thread.PostID))
@@ -467,7 +467,7 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 	// Replies to other comments point at their mirror, other comments fall back to the post.
 	replyTo, isFallback := post.MXID, true
 	if hdr, ok := msg.ReplyTo.(*tg.MessageReplyHeader); ok && hdr.ReplyToMsgID != rootID {
-		if target, err := tc.getCommentMirror(ctx, groupID, hdr.ReplyToMsgID); err == nil && target != nil {
+		if target, err := tc.getCommentMirror(ctx, portal.MXID, groupID, hdr.ReplyToMsgID); err == nil && target != nil {
 			replyTo, isFallback = target.EventID, false
 		}
 	}
@@ -508,11 +508,25 @@ func (tc *TelegramClient) mirrorComment(ctx context.Context, groupID int64, msg 
 	}
 	if editDate, ok := msg.GetEditDate(); ok {
 		// Mirrored with this edit already applied.
-		if err = tc.saveCommentEditDate(ctx, groupID, msg.ID, editDate); err != nil {
+		if err = tc.saveCommentEditDate(ctx, portal.MXID, groupID, msg.ID, editDate); err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment edit date")
 		}
 	}
 	return tc.saveCommentMirror(ctx, commentMirror{GroupID: groupID, MsgID: msg.ID, CopyID: rootID, RoomID: portal.MXID, EventID: firstEvent})
+}
+
+// commentPortalOfGroup returns the user's channel portal that comments of a discussion group are
+// mirrored into, nil if there is none.
+func (tc *TelegramClient) commentPortalOfGroup(ctx context.Context, groupID int64) (*bridgev2.Portal, error) {
+	channelID, err := tc.channelOfGroup(ctx, groupID)
+	if err != nil || channelID == 0 {
+		return nil, err
+	}
+	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, tc.makePortalKeyFromID(ids.PeerTypeChannel, channelID, 0))
+	if err != nil || portal == nil || portal.MXID == "" {
+		return nil, err
+	}
+	return portal, nil
 }
 
 // mirrorCommentEdit applies an edit of a mirrored comment to its thread message.
@@ -521,16 +535,20 @@ func (tc *TelegramClient) mirrorCommentEdit(ctx context.Context, msg *tg.Message
 	if !ok {
 		return
 	}
-	mirror, err := tc.getCommentMirror(ctx, group.ChannelID, msg.ID)
+	portal, err := tc.commentPortalOfGroup(ctx, group.ChannelID)
+	if err != nil || portal == nil {
+		return
+	}
+	mirror, err := tc.getCommentMirror(ctx, portal.MXID, group.ChannelID, msg.ID)
 	if err != nil || mirror == nil {
 		return
 	}
 	// Skip edits already applied (polling sees the same edit again).
-	if applied, err := tc.getCommentEditDate(ctx, group.ChannelID, msg.ID); err == nil && msg.EditDate != 0 && msg.EditDate <= applied {
+	if applied, err := tc.getCommentEditDate(ctx, portal.MXID, group.ChannelID, msg.ID); err == nil && msg.EditDate != 0 && msg.EditDate <= applied {
 		return
 	}
 	defer func() {
-		if err := tc.saveCommentEditDate(ctx, group.ChannelID, msg.ID, msg.EditDate); err != nil {
+		if err := tc.saveCommentEditDate(ctx, portal.MXID, group.ChannelID, msg.ID, msg.EditDate); err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment edit date")
 		}
 	}()
@@ -571,13 +589,17 @@ func (tc *TelegramClient) updateMirroredComment(ctx context.Context, groupID int
 
 // mirrorCommentDeletes removes mirrored comments that were deleted in the discussion group.
 func (tc *TelegramClient) mirrorCommentDeletes(ctx context.Context, groupID int64, msgIDs []int) {
+	portal, err := tc.commentPortalOfGroup(ctx, groupID)
+	if err != nil || portal == nil {
+		return
+	}
 	for _, msgID := range msgIDs {
-		mirror, err := tc.getCommentMirror(ctx, groupID, msgID)
+		mirror, err := tc.getCommentMirror(ctx, portal.MXID, groupID, msgID)
 		if err != nil || mirror == nil {
 			continue
 		}
 		tc.redactAsBot(ctx, mirror.RoomID, mirror.EventID, "comment deleted")
-		if err = tc.deleteCommentMirror(ctx, groupID, msgID); err != nil {
+		if err = tc.deleteCommentMirror(ctx, mirror.RoomID, groupID, msgID); err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to delete comment mirror")
 		}
 	}
@@ -590,7 +612,11 @@ func (tc *TelegramClient) fetchPostComments(ctx context.Context, channelID int64
 	if err != nil || thread == nil {
 		return err
 	}
-	minID, err := tc.lastMirroredComment(ctx, thread.GroupID, thread.CopyID)
+	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, tc.makePortalKeyFromID(ids.PeerTypeChannel, channelID, 0))
+	if err != nil || portal == nil || portal.MXID == "" {
+		return err
+	}
+	minID, err := tc.lastMirroredComment(ctx, portal.MXID, thread.GroupID, thread.CopyID)
 	if err != nil {
 		return err
 	}
@@ -791,8 +817,12 @@ func (tc *TelegramClient) readExistingCommentThreads(ctx context.Context) {
 	}
 	for _, t := range threads {
 		room, channelID, postID, eventID := t[0].(id.RoomID), t[1].(int64), t[2].(int), t[3].(id.EventID)
-		receiver := tc.makePortalKeyFromID(ids.PeerTypeChannel, channelID, 0).Receiver
-		post, err := tc.main.Bridge.DB.Message.GetFirstPartByID(ctx, receiver, ids.MakeMessageID(&tg.PeerChannel{ChannelID: channelID}, postID))
+		key := tc.makePortalKeyFromID(ids.PeerTypeChannel, channelID, 0)
+		if portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, key); err != nil || portal == nil || portal.MXID != room {
+			// Another user's room of the channel.
+			continue
+		}
+		post, err := tc.main.Bridge.DB.Message.GetFirstPartByID(ctx, key.Receiver, ids.MakeMessageID(&tg.PeerChannel{ChannelID: channelID}, postID))
 		if err != nil || post == nil || post.MXID == "" {
 			continue
 		}

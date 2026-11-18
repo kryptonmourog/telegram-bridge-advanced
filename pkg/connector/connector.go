@@ -27,6 +27,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/commands"
 	"maunium.net/go/mautrix/bridgev2/matrix"
 
+	"go.mau.fi/mautrix-telegram/pkg/connector/forkdb"
 	"go.mau.fi/mautrix-telegram/pkg/connector/store"
 )
 
@@ -34,6 +35,8 @@ type TelegramConnector struct {
 	Bridge *bridgev2.Bridge
 	Config TelegramConfig
 	Store  *store.Container
+	// forkDB runs the migrations of the fork's own tables (see forkdb); queries go through Store.
+	forkDB *dbutil.Database
 
 	useDirectMedia bool
 	maxFileSize    int64
@@ -44,6 +47,7 @@ var _ bridgev2.MaxFileSizeingNetwork = (*TelegramConnector)(nil)
 
 func (tc *TelegramConnector) Init(bridge *bridgev2.Bridge) {
 	tc.Store = store.NewStore(bridge.DB.Database, dbutil.ZeroLogger(bridge.Log.With().Str("db_section", "telegram").Logger()))
+	tc.forkDB = bridge.DB.Database.Child("fork_version", forkdb.Table, dbutil.ZeroLogger(bridge.Log.With().Str("db_section", "fork").Logger()))
 	tc.Bridge = bridge
 	tc.Bridge.Commands.(*commands.Processor).AddHandlers(cmdSyncChats, cmdEmojiPack, cmdUpgrade, cmdJoin, cmdFolders, cmdArchive, cmdAds, cmdLeftChats, cmdLang, cmdSettings, cmdEncryption)
 }
@@ -58,12 +62,12 @@ func (tc *TelegramConnector) Start(ctx context.Context) error {
 	if err := tc.Store.Upgrade(ctx); err != nil {
 		return err
 	}
+	if err := tc.forkDB.Upgrade(ctx); err != nil {
+		return fmt.Errorf("failed to upgrade the fork's tables: %w", err)
+	}
 	tc.registerAdsRoomReceipts()
 	tc.installTranslator()
-	if err := tc.createPollTables(ctx); err != nil {
-		return err
-	}
-	return tc.createCommentTables(ctx)
+	return nil
 }
 
 // matrixResponseTimeout is how long to wait for the homeserver's response once a request has been
