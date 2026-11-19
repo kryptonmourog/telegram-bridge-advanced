@@ -22,6 +22,7 @@ require (
 	github.com/gotd/tl v0.4.0
 	github.com/k0kubun/pp/v3 v3.5.2
 	github.com/klauspost/compress v1.20.4
+	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
@@ -56,7 +57,6 @@ require (
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.53 // indirect
 	github.com/petermattis/goid v0.0.0-20261109124353-7cfa343ad0ab // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
@@ -78,4 +78,5 @@ require (
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
 
-replace maunium.net/go/mautrix => ./third_party/mautrix-go
+// The fork of mautrix-go with the changes this bridge needs (https://github.com/kryptonmourog/mautrix-go-fork).
+replace maunium.net/go/mautrix => github.com/kryptonmourog/mautrix-go-fork v0.33.0-adv.1
