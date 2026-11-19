@@ -30,13 +30,8 @@ organised gets lost on the way. The fork also covers setups where Telegram isn't
 - Guide (in Russian for now): [docs/INSTALL.ru.md](docs/INSTALL.ru.md) — manual setup, the
   matrix-docker-ansible-deploy role, the bridge on a separate server, the fork's settings.
 - With matrix-docker-ansible-deploy: [telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible).
-- Image: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<version>`. Versions are
-  `v<mautrix-telegram version>-adv.<N>`, e.g. `v0.2611.0-adv.1`; `v0.2611.0-adv` is the latest release on that
-  base, `latest` the latest release.
-
-The database stays compatible with upstream: switching back to mautrix-telegram of the same version keeps the
-rooms and ignores the fork's extra tables. Rooms of channels made per user (`personal_channels`) are the
-exception: upstream doesn't know them and makes new shared ones.
+- Image: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<version>`, e.g. `v0.2611.0-adv.1` (the version
+  scheme, updating and going back to upstream are in the guide).
 
 ## The project
 

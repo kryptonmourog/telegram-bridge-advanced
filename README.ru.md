@@ -30,12 +30,8 @@ Go). Это основной репозиторий проекта: код мо�
 - Инструкция: [docs/INSTALL.ru.md](docs/INSTALL.ru.md) — ручная установка, роль matrix-docker-ansible-deploy,
   мост на отдельном сервере, настройки форка.
 - С matrix-docker-ansible-deploy: [telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible).
-- Образ: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<версия>`. Версии — `v<версия mautrix-telegram>-adv.<N>`,
-  например `v0.2611.0-adv.1`; `v0.2611.0-adv` — последний выпуск на этой основе, `latest` — последний выпуск.
-
-База остаётся совместимой с upstream: при возврате на mautrix-telegram той же версии комнаты сохраняются, а
-лишние таблицы форка он игнорирует. Исключение — личные комнаты каналов (`personal_channels`): upstream их не
-знает и создаст новые общие.
+- Образ: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<версия>`, например `v0.2611.0-adv.1` (схема версий,
+  обновление и возврат на upstream — в [инструкции](docs/INSTALL.ru.md#версии)).
 
 ## Проект
 
