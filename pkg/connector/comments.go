@@ -1214,17 +1214,21 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 	// bridgev2 only resolves msg.ThreadRoot for networks that declare thread support, so read the
 	// thread from the event itself.
 	threadParent := msg.Content.RelatesTo.GetThreadParent()
-	if threadParent == "" {
-		return false, nil
-	}
 	channelID, ok := tc.isBroadcastPortal(msg.Portal)
 	if !ok {
 		return false, nil
 	}
+	if threadParent == "" {
+		// A plain reply to a post or a comment is a comment too when the user can't post in the
+		// channel: that's the only thing it can be on Telegram.
+		if threadParent = tc.replyAsCommentThread(ctx, msg, channelID); threadParent == "" {
+			return false, nil
+		}
+	}
 	// From here on the message is never sent as a channel post, which is what a thread reply would
 	// otherwise become.
 	root := msg.ThreadRoot
-	if root == nil {
+	if root == nil || threadParent != msg.Content.RelatesTo.GetThreadParent() {
 		if root, err = tc.main.Bridge.DB.Message.GetPartByMXID(ctx, threadParent); err != nil {
 			return true, fmt.Errorf("failed to find the post of the thread: %w", err)
 		}
@@ -1294,6 +1298,44 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 		return true, err
 	}
 	return true, errCommentSent
+}
+
+// replyAsCommentThread returns the post a plain reply comments on, if the user can't post in the
+// channel and the reply is to a post or to a comment; empty otherwise.
+func (tc *TelegramClient) replyAsCommentThread(ctx context.Context, msg *bridgev2.MatrixMessage, channelID int64) id.EventID {
+	replyTo := msg.Content.RelatesTo.GetNonFallbackReplyTo()
+	if replyTo == "" || tc.canPostInChannel(ctx, channelID) {
+		return ""
+	}
+	if mirror, err := tc.getCommentMirrorByEvent(ctx, replyTo); err == nil && mirror != nil {
+		thread, err := tc.getCommentThreadByCopy(ctx, mirror.GroupID, mirror.CopyID)
+		if err != nil || thread == nil {
+			return ""
+		}
+		post, err := tc.main.Bridge.DB.Message.GetFirstPartByID(ctx, msg.Portal.Receiver, ids.MakeMessageID(&tg.PeerChannel{ChannelID: channelID}, thread.PostID))
+		if err != nil || post == nil {
+			return ""
+		}
+		return post.MXID
+	}
+	if post, err := tc.main.Bridge.DB.Message.GetPartByMXID(ctx, replyTo); err == nil && post != nil && post.Room == msg.Portal.PortalKey {
+		return replyTo
+	}
+	return ""
+}
+
+// canPostInChannel reports whether the user may post in a broadcast channel (its creator or an admin
+// with the right to post). It's true when that can't be found out, so that posting is tried.
+func (tc *TelegramClient) canPostInChannel(ctx context.Context, channelID int64) bool {
+	channel, err := tc.getSingleChannel(ctx, channelID)
+	if err != nil {
+		return true
+	}
+	if channel.Creator {
+		return true
+	}
+	rights, ok := channel.GetAdminRights()
+	return ok && rights.PostMessages
 }
 
 // joinDiscussionNeededError tells the user how to join the discussion group when it only lets members
@@ -1408,14 +1450,22 @@ func fnJoinDiscussion(ce *commands.Event) {
 		ce.Reply("Failed to get the channel's discussion group: %v", "not in the response")
 		return
 	}
-	// Joining makes Telegram send the group, the bridge creates its room like for any new chat.
-	if _, err = tc.client.API().ChannelsJoinChannel(ce.Ctx, group.AsInput()); err != nil {
+	joined, err := tc.client.API().ChannelsJoinChannel(ce.Ctx, group.AsInput())
+	if err != nil {
 		if tgerr.Is(err, tg.ErrUserAlreadyParticipant) {
 			ce.Reply("You're already a member of %s", html.EscapeString(group.Title))
 			return
 		}
 		ce.Reply("Failed to join chat: %v", err)
 		return
+	}
+	// Telegram tells about the join only in this response. Without handling it the client still
+	// considers the group left (from comments seen before joining) and ignores its updates, so the
+	// group's room didn't become the user's.
+	if ok, isOK := joined.(*tg.MessagesChatInviteJoinResultOk); isOK {
+		if err = tc.updatesManager.Handle(ce.Ctx, ok.Updates); err != nil {
+			ce.Log.Err(err).Msg("Failed to handle updates of joining the discussion group")
+		}
 	}
 	ce.Reply("Joined %s, comments to this channel can be sent now.", html.EscapeString(group.Title))
 }

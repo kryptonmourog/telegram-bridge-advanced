@@ -642,6 +642,13 @@ func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2
 	}
 	if err != nil {
 		log.Err(err).Msg("failed to send message to Telegram")
+		if _, isChannel := tc.isBroadcastPortal(msg.Portal); isChannel && (tg.IsChatAdminRequired(err) || tg.IsChatWriteForbidden(err)) {
+			return nil, bridgev2.WrapErrorInStatus(err).
+				WithErrorReason(event.MessageStatusNoPermission).
+				WithMessage(tc.tl("Only admins can post in this channel. To comment on a post, reply to it or in its thread.")).
+				WithIsCertain(true).
+				WithSendNotice(true)
+		}
 		return nil, tc.humaniseSendError(err)
 	}
 	resp, _, err = tc.makeSendResponse(ctx, msg.Portal, updates, randomID, msg.Content.Body, contentURI)
