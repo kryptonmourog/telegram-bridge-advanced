@@ -692,6 +692,7 @@ var ruTranslations = map[string]string{
 	"[_setting_ _value_]":                               "[_настройка_ _значение_]",
 	"Use `on` or `off`.":                                "Укажите `on` или `off`.",
 	"Usage: `$cmdprefix settings media all`, `$cmdprefix settings media none` or `$cmdprefix settings media <MB>`": "Использование: `$cmdprefix settings media all`, `$cmdprefix settings media none` или `$cmdprefix settings media <МБ>`",
+	"This room is shared with other users of the bridge, only bridge admins can change its settings.":              "Эта комната общая с другими пользователями моста, её настройки может менять только администратор моста.",
 	"Signatures are only shown in channels.":                                     "Подписи авторов бывают только в каналах.",
 	"Unknown setting `%s`, see `$cmdprefix settings`.":                           "Неизвестная настройка `%s`, см. `$cmdprefix settings`.",
 	"Bridging resumed, the last %d messages sent meanwhile are being caught up.": "Перенос возобновлён, догружаются последние %d сообщений, пропущенных за паузу.",

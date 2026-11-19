@@ -113,6 +113,12 @@ func fnSettings(ce *commands.Event) {
 		ce.Reply("%s", client.describeRoomSettings(ce, settings, isChannel))
 		return
 	}
+	// A shared room (supergroups and forums) is the same for all its users: pausing it or skipping its
+	// media would do so for everyone, so only bridge admins change its settings.
+	if ce.Portal.Receiver == "" && !ce.User.Permissions.Admin {
+		ce.Reply("This room is shared with other users of the bridge, only bridge admins can change its settings.")
+		return
+	}
 	name := strings.ToLower(ce.Args[0])
 	var value string
 	if len(ce.Args) > 1 {
