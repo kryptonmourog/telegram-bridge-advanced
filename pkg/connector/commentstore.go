@@ -162,9 +162,10 @@ func (tc *TelegramClient) channelOfGroup(ctx context.Context, groupID int64) (in
 func (tc *TelegramClient) latestCommentPerThread(ctx context.Context) (out [][4]any, err error) {
 	rows, err := tc.main.Store.Query(ctx, `
 		SELECT m.room_id, t.channel_id, t.post_id, m.event_id
-		FROM fork_comment_mirror m JOIN fork_comment_thread t ON t.group_id=m.group_id AND t.copy_id=m.copy_id
-		WHERE m.msg_id = (SELECT MAX(m2.msg_id) FROM fork_comment_mirror m2
-		                  WHERE m2.room_id=m.room_id AND m2.group_id=m.group_id AND m2.copy_id=m.copy_id)`)
+		FROM (SELECT room_id, group_id, copy_id, MAX(msg_id) AS msg_id FROM fork_comment_mirror
+		      GROUP BY room_id, group_id, copy_id) latest
+		JOIN fork_comment_mirror m ON m.room_id=latest.room_id AND m.group_id=latest.group_id AND m.msg_id=latest.msg_id
+		JOIN fork_comment_thread t ON t.group_id=m.group_id AND t.copy_id=m.copy_id`)
 	if err != nil {
 		return nil, err
 	}
