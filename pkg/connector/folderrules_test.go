@@ -324,15 +324,16 @@ func TestFolderDefaultIcon(t *testing.T) {
 		folder folderDef
 		name   string
 	}{
-		{folderDef{Title: "Work", Emoticon: "💼", Groups: true}, "💼 Work"},
-		{folderDef{Title: "ЛС", Contacts: true, NonContacts: true}, "👤 ЛС"},
-		{folderDef{Title: "Чаты", Groups: true, ExcludeArchived: true}, "👥 Чаты"},
-		{folderDef{Title: "Каналы", Broadcasts: true}, "📢 Каналы"},
-		{folderDef{Title: "Боты", Bots: true}, "🤖 Боты"},
-		{folderDef{Title: "Новые", Contacts: true, Groups: true, ExcludeRead: true}, "✅ Новые"},
-		{folderDef{Title: "Selfhosting", Include: people}, "📁 Selfhosting"},
-		{folderDef{Title: "Боты+", Bots: true, Include: people}, "📁 Боты+"},
-		{folderDef{Title: "Shared", IsChatlist: true}, "📁 Shared"},
+		{folderDef{Title: "Folder", Emoticon: "💼", Groups: true}, "💼 Folder"},
+		{folderDef{Title: "Folder", Contacts: true, NonContacts: true}, "👤 Folder"},
+		{folderDef{Title: "Folder", Groups: true, ExcludeArchived: true}, "👥 Folder"},
+		{folderDef{Title: "Folder", Broadcasts: true}, "📢 Folder"},
+		{folderDef{Title: "Folder", Bots: true}, "🤖 Folder"},
+		{folderDef{Title: "Folder", Contacts: true, Groups: true, ExcludeRead: true}, "✅ Folder"},
+		{folderDef{Title: "Folder", Contacts: true, Groups: true, ExcludeMuted: true}, "🔔 Folder"},
+		{folderDef{Title: "Folder", Include: people}, "📁 Folder"},
+		{folderDef{Title: "Folder", Bots: true, Include: people}, "📁 Folder"},
+		{folderDef{Title: "Folder", IsChatlist: true}, "📁 Folder"},
 	} {
 		assert.Equal(t, tc.name, tc.folder.SpaceName())
 	}
