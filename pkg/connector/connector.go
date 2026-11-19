@@ -52,7 +52,7 @@ func (tc *TelegramConnector) Init(bridge *bridgev2.Bridge) {
 	tc.Store = store.NewStore(bridge.DB.Database, dbutil.ZeroLogger(bridge.Log.With().Str("db_section", "telegram").Logger()))
 	tc.forkDB = bridge.DB.Database.Child("fork_version", forkdb.Table, dbutil.ZeroLogger(bridge.Log.With().Str("db_section", "fork").Logger()))
 	tc.Bridge = bridge
-	tc.Bridge.Commands.(*commands.Processor).AddHandlers(cmdSyncChats, cmdEmojiPack, cmdUpgrade, cmdJoin, cmdFolders, cmdArchive, cmdAds, cmdLeftChats, cmdLang, cmdSettings, cmdEncryption)
+	tc.Bridge.Commands.(*commands.Processor).AddHandlers(cmdSyncChats, cmdEmojiPack, cmdUpgrade, cmdJoin, cmdFolders, cmdArchive, cmdAds, cmdLeftChats, cmdLang, cmdSettings, cmdEncryption, cmdJoinDiscussion)
 }
 
 func (tc *TelegramConnector) Start(ctx context.Context) error {

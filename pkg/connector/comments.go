@@ -33,6 +33,7 @@ import (
 	"golang.org/x/sync/singleflight"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/commands"
 	"maunium.net/go/mautrix/bridgev2/matrix"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 	"maunium.net/go/mautrix/event"
@@ -1146,9 +1147,6 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 	} else if thread == nil {
 		return true, fmt.Errorf("this post has no comments in Telegram")
 	}
-	if msg.Content.MsgType.IsMedia() {
-		return true, fmt.Errorf("sending media as a comment isn't supported yet")
-	}
 	replyToID := thread.CopyID
 	if replyEvent := msg.Content.RelatesTo.GetNonFallbackReplyTo(); replyEvent != "" && replyEvent != threadParent {
 		if target, err := tc.getCommentMirrorByEvent(ctx, replyEvent); err == nil && target != nil && target.GroupID == thread.GroupID {
@@ -1159,28 +1157,72 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 	if err != nil {
 		return true, err
 	}
-	text, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal, tc.getMaxMessageLength(ctx, false))
+	peer := &tg.InputPeerChannel{ChannelID: group.ChannelID, AccessHash: group.AccessHash}
+	replyTo := &tg.InputReplyToMessage{ReplyToMsgID: replyToID, TopMsgID: thread.CopyID}
+	isMedia := msg.Content.MsgType.IsMedia() || msg.Event.Type == event.EventSticker
+	text, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal, tc.getMaxMessageLength(ctx, isMedia))
 	var randomID [8]byte
 	_, _ = rand.Read(randomID[:])
-	if err = tc.sendComment(ctx, thread, msg, &tg.MessagesSendMessageRequest{
-		Peer:     &tg.InputPeerChannel{ChannelID: group.ChannelID, AccessHash: group.AccessHash},
-		Message:  text,
-		Entities: entities,
-		RandomID: int64(binary.LittleEndian.Uint64(randomID[:])),
-		ReplyTo:  &tg.InputReplyToMessage{ReplyToMsgID: replyToID, TopMsgID: thread.CopyID},
-	}); err != nil {
+	var send func() (tg.UpdatesClass, error)
+	if isMedia {
+		// Uploaded to Telegram before taking the comment lock, which a large file would hold up.
+		forceDocument, _ := msg.Event.Content.Raw["fi.mau.telegram.force_document"].(bool)
+		media, err := tc.transferMediaToTelegram(ctx, msg.Content, msg.Event.Type == event.EventSticker, false, forceDocument)
+		if err != nil {
+			return true, err
+		}
+		send = func() (tg.UpdatesClass, error) {
+			return tc.client.API().MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{
+				Peer:     peer,
+				Message:  text,
+				Entities: entities,
+				Media:    media,
+				ReplyTo:  replyTo,
+				RandomID: int64(binary.LittleEndian.Uint64(randomID[:])),
+			})
+		}
+	} else {
+		send = func() (tg.UpdatesClass, error) {
+			return tc.client.API().MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+				Peer:     peer,
+				Message:  text,
+				Entities: entities,
+				ReplyTo:  replyTo,
+				RandomID: int64(binary.LittleEndian.Uint64(randomID[:])),
+			})
+		}
+	}
+	if err = tc.sendComment(ctx, thread, msg, send); err != nil {
+		if tgerr.Is(err, tg.ErrChatGuestSendForbidden) {
+			return true, tc.joinDiscussionNeededError(ctx, thread.GroupID, err)
+		}
 		return true, err
 	}
 	return true, errCommentSent
 }
 
+// joinDiscussionNeededError tells the user how to join the discussion group when it only lets members
+// comment, as Telegram apps offer to join first.
+func (tc *TelegramClient) joinDiscussionNeededError(ctx context.Context, groupID int64, err error) error {
+	name := tc.tl("the discussion group")
+	var link string
+	if channel, chErr := tc.getSingleChannel(ctx, groupID); chErr == nil {
+		name = channel.Title
+		if channel.Username != "" {
+			link = " https://t.me/" + channel.Username
+		}
+	}
+	text := fmt.Sprintf(tc.tl("Only members of %s can comment. To join it, send `%s join-discussion` in this room."), name, tc.main.Bridge.Config.CommandPrefix) + link
+	return bridgev2.WrapErrorInStatus(err).WithMessage(text).WithIsCertain(true).WithSendNotice(true)
+}
+
 // sendComment sends a comment written in Matrix and records the Matrix event as its mirror. Telegram
 // can deliver the new comment as an update before the request returns; the comment lock keeps
 // mirrorComment from mirroring it back into the thread until the mirror is saved.
-func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread, msg *bridgev2.MatrixMessage, req *tg.MessagesSendMessageRequest) error {
+func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread, msg *bridgev2.MatrixMessage, send func() (tg.UpdatesClass, error)) error {
 	tc.comments.lock.Lock()
 	defer tc.comments.lock.Unlock()
-	updates, err := tc.client.API().MessagesSendMessage(ctx, req)
+	updates, err := send()
 	if err != nil {
 		return fmt.Errorf("failed to send comment: %w", err)
 	}
@@ -1219,4 +1261,66 @@ func sentMessageID(updates tg.UpdatesClass) int {
 		}
 	}
 	return 0
+}
+
+var cmdJoinDiscussion = &commands.FullHandler{
+	Func: fnJoinDiscussion,
+	Name: "join-discussion",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "Join the discussion group of this channel, for comments that need membership",
+	},
+	RequiresLogin:  true,
+	RequiresPortal: true,
+}
+
+func fnJoinDiscussion(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return
+	}
+	tc := login.Client.(*TelegramClient)
+	channelID, ok := tc.isBroadcastPortal(ce.Portal)
+	if !ok {
+		ce.Reply("This command only works in the room of a channel.")
+		return
+	}
+	channel, err := tc.inputChannel(ce.Ctx, channelID)
+	if err != nil {
+		ce.Reply("Failed to find the channel: %v", err)
+		return
+	}
+	full, err := commentAPICall(ce.Ctx, tc, func() (*tg.MessagesChatFull, error) {
+		return tc.client.API().ChannelsGetFullChannel(ce.Ctx, channel)
+	})
+	if err != nil {
+		ce.Reply("Failed to get the channel's discussion group: %v", err)
+		return
+	}
+	channelFull, ok := full.FullChat.(*tg.ChannelFull)
+	if !ok || channelFull.LinkedChatID == 0 {
+		ce.Reply("This channel has no discussion group.")
+		return
+	}
+	var group *tg.Channel
+	for _, c := range full.Chats {
+		if ch, ok := c.(*tg.Channel); ok && ch.ID == channelFull.LinkedChatID {
+			group = ch
+		}
+	}
+	if group == nil {
+		ce.Reply("Failed to get the channel's discussion group: %v", "not in the response")
+		return
+	}
+	// Joining makes Telegram send the group, the bridge creates its room like for any new chat.
+	if _, err = tc.client.API().ChannelsJoinChannel(ce.Ctx, group.AsInput()); err != nil {
+		if tgerr.Is(err, tg.ErrUserAlreadyParticipant) {
+			ce.Reply("You're already a member of %s", html.EscapeString(group.Title))
+			return
+		}
+		ce.Reply("Failed to join chat: %v", err)
+		return
+	}
+	ce.Reply("Joined %s, comments to this channel can be sent now.", html.EscapeString(group.Title))
 }
