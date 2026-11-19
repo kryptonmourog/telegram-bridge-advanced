@@ -19,7 +19,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -141,10 +140,10 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 	if err != nil {
 		return nil, err
 	}
-	// The rest of a chunked backfill comes as a catch-up resync, which bridgev2 limits to
-	// max_catchup_messages. Telegram returns the newest messages above the anchor, so any limit lower
-	// than what's left (the rest of the initial backfill plus messages that came meanwhile) would leave
-	// a hole between the chunks. Fetch everything after the anchor: the loop below stops there.
+	// The rest of a chunked backfill comes as a catch-up resync. It fetches one page of the messages
+	// right after the anchor (add_offset pages towards newer messages) instead of all messages above
+	// it newest first, which was every page again for every chunk: a full page continues with the next
+	// one. bridgev2 limits catch-up to max_catchup_messages, so this also leaves no hole.
 	continuingChunks := fetchParams.Forward && fetchParams.AnchorMessage != nil &&
 		fetchParams.Portal.Metadata.(*PortalMetadata).ChunkedBackfillPending
 	if fetchParams.Forward && tc.backfillSplitBytes() > 0 {
@@ -193,27 +192,32 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		return nil, nil
 	}
 	limit := fetchParams.Count
-	if continuingChunks {
-		limit = math.MaxInt
-	}
 	const chunkLimit = 100
+	var addOffset int
+	if continuingChunks && minID > 0 {
+		limit, offsetID, addOffset = chunkLimit, minID, -chunkLimit
+	}
 	makeReq := func() bin.Object {
 		if topicID > 0 {
 			return &tg.MessagesGetRepliesRequest{
-				Peer:     peer,
-				MsgID:    topicID,
-				Limit:    min(limit, chunkLimit),
-				MinID:    minID,
-				OffsetID: offsetID,
+				Peer:      peer,
+				MsgID:     topicID,
+				Limit:     min(limit, chunkLimit),
+				MinID:     minID,
+				OffsetID:  offsetID,
+				AddOffset: addOffset,
 			}
 		}
 		return &tg.MessagesGetHistoryRequest{
-			Peer:     peer,
-			Limit:    min(limit, chunkLimit),
-			MinID:    minID,
-			OffsetID: offsetID,
+			Peer:      peer,
+			Limit:     min(limit, chunkLimit),
+			MinID:     minID,
+			OffsetID:  offsetID,
+			AddOffset: addOffset,
 		}
 	}
+	// pageFull is set when the page after the anchor was full, so more messages may follow it.
+	pageFull := false
 	var messages []tg.MessageClass
 	requestCount := 0
 	for limit > 0 {
@@ -264,6 +268,10 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 			messages = newMessages
 		} else {
 			messages = append(messages, resp.GetMessages()...)
+		}
+		if addOffset != 0 {
+			pageFull = len(newMessages) >= chunkLimit
+			break
 		}
 		if len(newMessages) < chunkLimit || !fetchParams.Forward {
 			break
@@ -330,21 +338,33 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		})
 	}
 
+	if pageFull && len(toConvert) > 0 {
+		// The next page starts after the last message sent, and bridgev2 drops messages that aren't
+		// newer than it: leave the page's last second (e.g. part of an album) to the next page,
+		// unless it's the whole page.
+		lastDate := toConvert[len(toConvert)-1].Date
+		if trimmed := slices.DeleteFunc(slices.Clone(toConvert), func(m *tg.Message) bool { return m.Date == lastDate }); len(trimmed) > 0 {
+			toConvert = trimmed
+		}
+	}
+
 	// When splitting, a chunk ends at a large file: the messages before it are sent first, and the
 	// file is sent alone, so the room fills up while large uploads are running.
 	var splitAt int64
 	if fetchParams.Forward {
 		splitAt = tc.backfillSplitBytes()
 		if splitAt > 0 && fetchParams.AnchorMessage != nil && tc.chunkedBackfill.repeatedAnchor(portal.PortalKey, fetchParams.AnchorMessage.ID) {
-			log.Warn().Str("anchor_id", string(fetchParams.AnchorMessage.ID)).Msg("Previous backfill chunk made no progress, sending the rest at once")
+			log.Warn().Str("anchor_id", string(fetchParams.AnchorMessage.ID)).Msg("Previous backfill chunk made no progress, sending the rest without splitting at large files")
 			splitAt = 0
-			// Still hold new messages until this last part is sent.
-			key := portal.PortalKey
-			defer func() {
-				if retErr == nil && out != nil {
-					out.CompleteCallback = func() { go tc.finishChunkedBackfill(key, true) }
-				}
-			}()
+			if !pageFull {
+				// Still hold new messages until this last part is sent.
+				key := portal.PortalKey
+				defer func() {
+					if retErr == nil && out != nil {
+						out.CompleteCallback = func() { go tc.finishChunkedBackfill(key, true) }
+					}
+				}()
+			}
 		}
 	}
 	hasMoreChunks := false
@@ -415,8 +435,12 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		}
 	}
 
+	if pageFull && !hasMoreChunks && len(backfillMessages) > 0 {
+		// The page ended before a large file did, the next page continues.
+		hasMoreChunks = true
+	}
 	var completeCallback func()
-	if splitAt > 0 {
+	if splitAt > 0 || pageFull {
 		key := portal.PortalKey
 		if hasMoreChunks {
 			tc.setChunkedBackfillPending(ctx, portal, true)
