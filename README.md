@@ -1,3 +1,28 @@
+# telegram-bridge-advanced
+
+A fork of [mautrix-telegram](https://github.com/mautrix/telegram) (bridgev2) with features for people who
+live in Matrix and use Telegram heavily. Russian and English bot replies.
+
+- Telegram folders as Matrix spaces, the archive, pinned chats, Telegram's notification defaults.
+- Channel comments as threads under posts: both ways (text and media), joining the discussion group,
+  comments fetched in the background for groups the user isn't in; replies to posts become comments.
+- Several users: a channel room per user, shared supergroups and forums, settings of shared rooms
+  for bridge admins only.
+- Polls both ways, bot buttons, rich posts, Telegram ads in a separate room, per-room settings
+  (`!tg settings`: media limit, pause, signatures, buttons), cleanup of rooms of left chats.
+- Encryption of private chats; direct media for channels and, encrypted, for private chats; large
+  files streamed without temporary files; history depth per chat type, history sent in chunks.
+
+Installation and settings: [docs/INSTALL.ru.md](docs/INSTALL.ru.md). With matrix-docker-ansible-deploy,
+including the bridge on a separate server:
+[telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible).
+Images: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<version>` (versions: `v<mautrix-telegram>-adv.<N>`).
+It depends on a fork of mautrix-go: [mautrix-go-fork](https://github.com/kryptonmourog/mautrix-go-fork).
+
+The rest of this README is upstream's.
+
+---
+
 # mautrix-telegram
 ![Languages](https://img.shields.io/github/languages/top/mautrix/telegram.svg)
 [![License](https://img.shields.io/github/license/mautrix/telegram.svg)](LICENSE)
