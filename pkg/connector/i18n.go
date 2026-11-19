@@ -703,6 +703,7 @@ var ruTranslations = map[string]string{
 	"This channel has no discussion group.":                                                     "У этого канала нет группы обсуждения.",
 	"Joined %s, comments to this channel can be sent now.":                                      "Вы вступили в %s, теперь можно комментировать посты этого канала.",
 	"Only admins can post in this channel. To comment on a post, reply to it or in its thread.": "Публиковать в этом канале могут только администраторы. Чтобы прокомментировать пост, ответьте на него или в его ветке.",
+	"💬 Moved to the comments of the post":                                                       "💬 Перенесено в комментарии к посту",
 	"Signatures are only shown in channels.":                                                    "Подписи авторов бывают только в каналах.",
 	"Unknown setting `%s`, see `$cmdprefix settings`.":                                          "Неизвестная настройка `%s`, см. `$cmdprefix settings`.",
 	"Bridging resumed, the last %d messages sent meanwhile are being caught up.":                "Перенос возобновлён, догружаются последние %d сообщений, пропущенных за паузу.",

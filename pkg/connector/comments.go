@@ -1389,8 +1389,9 @@ func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread
 }
 
 // moveIntoThread puts a plain reply that was sent as a comment into the post's thread, where comments
-// are, and removes it from the main timeline: Matrix can't move an event, so it's sent again in the
-// thread with the user's double puppet. It returns the new event, empty if it stayed where it was.
+// are: Matrix can't move an event, so it's sent again in the thread with the user's double puppet, and
+// the original is edited into a note saying it was moved. It returns the new event, empty if it stayed
+// where it was.
 func (tc *TelegramClient) moveIntoThread(ctx context.Context, msg *bridgev2.MatrixMessage, post id.EventID) id.EventID {
 	dp := tc.userLogin.User.DoublePuppet(ctx)
 	if dp == nil {
@@ -1412,10 +1413,12 @@ func (tc *TelegramClient) moveIntoThread(ctx context.Context, msg *bridgev2.Matr
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to move comment into the post's thread")
 		return ""
 	}
-	if _, err = dp.SendMessage(ctx, msg.Portal.MXID, event.EventRedaction, &event.Content{
-		Parsed: &event.RedactionEventContent{Redacts: msg.Event.ID, Reason: "moved into the comments of the post"},
-	}, &bridgev2.MatrixSendExtra{Timestamp: time.Now()}); err != nil {
-		zerolog.Ctx(ctx).Err(err).Msg("Failed to remove the comment from the main timeline")
+	// The original becomes a note saying where the message went, rather than a deleted message.
+	note := &event.MessageEventContent{MsgType: event.MsgNotice, Body: tc.tl("💬 Moved to the comments of the post")}
+	note.SetEdit(msg.Event.ID)
+	if _, err = dp.SendMessage(ctx, msg.Portal.MXID, event.EventMessage, &event.Content{Parsed: note},
+		&bridgev2.MatrixSendExtra{Timestamp: time.Now()}); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to replace the comment in the main timeline with a note")
 	}
 	return resp.EventID
 }
