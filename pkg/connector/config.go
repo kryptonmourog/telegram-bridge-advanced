@@ -107,11 +107,20 @@ type TelegramConfig struct {
 	MaxInitialMessagesOverride           map[string]int      `yaml:"max_initial_messages_override"`
 	PersonalChannels                     bool                `yaml:"personal_channels"`
 	EncryptedDirectMedia                 string              `yaml:"encrypted_direct_media"`
+	CommentPoll                          CommentPollConfig   `yaml:"comment_poll"`
 	SkipMedia                            []SkipMediaRule     `yaml:"skip_media"`
 	BridgeCommunities                    bool                `yaml:"bridge_communities"`
 	ExtEvPolls                           bool                `yaml:"extev_polls"`
 	DisplaynameTemplate                  string              `yaml:"displayname_template"`
 	displaynameTemplate                  *template.Template  `yaml:"-"`
+}
+
+// CommentPollConfig sets how comments are fetched from discussion groups that send no updates (ones the
+// user isn't a member of).
+type CommentPollConfig struct {
+	OnReadSeconds     int `yaml:"on_read_seconds"`
+	BackgroundMinutes int `yaml:"background_minutes"`
+	BackgroundHours   int `yaml:"background_hours"`
 }
 
 const (
@@ -259,6 +268,9 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Map, "max_initial_messages_override")
 	helper.Copy(up.Bool, "personal_channels")
 	helper.Copy(up.Str, "encrypted_direct_media")
+	helper.Copy(up.Int, "comment_poll", "on_read_seconds")
+	helper.Copy(up.Int, "comment_poll", "background_minutes")
+	helper.Copy(up.Int, "comment_poll", "background_hours")
 	helper.Copy(up.List, "skip_media")
 	helper.Copy(up.Bool, "bridge_communities")
 	helper.Copy(up.Bool, "extev_polls")

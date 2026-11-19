@@ -69,7 +69,13 @@ type commentManager struct {
 	openRooms map[id.RoomID]struct{}
 }
 
-const commentPollInterval = 5 * time.Minute
+// commentPollOnRead is how often a channel room is polled for comments when the user reads it.
+func (tc *TelegramClient) commentPollOnRead() time.Duration {
+	if secs := tc.main.Config.CommentPoll.OnReadSeconds; secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return time.Minute
+}
 
 // commentAPICall makes a request for comments, waiting out flood waits. Comments are fetched in the
 // background for many posts in a row, and Telegram asks to slow down: without waiting, every following
@@ -814,7 +820,7 @@ func (tc *TelegramClient) maybePollComments(ctx context.Context, portal *bridgev
 	if tc.comments.lastPoll == nil {
 		tc.comments.lastPoll = make(map[id.RoomID]time.Time)
 	}
-	if time.Since(tc.comments.lastPoll[portal.MXID]) < commentPollInterval {
+	if time.Since(tc.comments.lastPoll[portal.MXID]) < tc.commentPollOnRead() {
 		tc.comments.lock.Unlock()
 		return
 	}
@@ -831,6 +837,95 @@ func (tc *TelegramClient) maybePollComments(ctx context.Context, portal *bridgev
 			zerolog.Ctx(ctx).Err(err).Int("post_id", postID).Msg("Failed to poll comments")
 		}
 	}
+}
+
+// pollCommentsInBackground fetches new comments of recent posts in all channel rooms of the login,
+// every comment_poll.background_minutes. Discussion groups the user isn't a member of send no updates,
+// so without it their comments only came when the user read the channel room.
+func (tc *TelegramClient) pollCommentsInBackground(ctx context.Context) {
+	interval := time.Duration(tc.main.Config.CommentPoll.BackgroundMinutes) * time.Minute
+	if interval <= 0 {
+		return
+	}
+	window := time.Duration(max(tc.main.Config.CommentPoll.BackgroundHours, 1)) * time.Hour
+	log := zerolog.Ctx(ctx).With().Str("action", "poll comments").Logger()
+	ctx = log.WithContext(ctx)
+	for {
+		select {
+		case <-time.After(interval):
+		case <-ctx.Done():
+			return
+		}
+		userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
+		if err != nil {
+			log.Err(err).Msg("Failed to get portals to poll comments")
+			continue
+		}
+		fetched := 0
+		for _, up := range userPortals {
+			if ctx.Err() != nil {
+				return
+			}
+			portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, up.Portal)
+			if err != nil || portal == nil || portal.MXID == "" {
+				continue
+			}
+			channelID, ok := tc.isBroadcastPortal(portal)
+			if !ok || tc.folderSpaces.skipArchivedPeer(&tg.PeerChannel{ChannelID: channelID}) {
+				continue
+			}
+			n, requested := tc.pollNewComments(ctx, portal, channelID, time.Now().Add(-window))
+			fetched += n
+			if requested {
+				// Spread the requests, one per channel with recent posts.
+				select {
+				case <-time.After(time.Second):
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+		if fetched > 0 {
+			log.Info().Int("posts", fetched).Msg("Fetched new comments")
+		}
+	}
+}
+
+// pollNewComments fetches the comments of the channel's posts since the given time whose newest
+// comment isn't in the room yet. It reports how many posts it fetched comments of and whether it
+// asked Telegram at all (not for channels without recent posts).
+func (tc *TelegramClient) pollNewComments(ctx context.Context, portal *bridgev2.Portal, channelID int64, since time.Time) (int, bool) {
+	latest, err := tc.main.Bridge.DB.Message.GetLastNInPortal(ctx, portal.PortalKey, 1)
+	if err != nil || len(latest) == 0 || latest[0].Timestamp.Before(since) {
+		return 0, false
+	}
+	posts, err := tc.latestPostsWithComments(ctx, portal, channelID, 20)
+	if err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Int64("channel_id", channelID).Msg("Failed to check posts for new comments")
+		return 0, true
+	}
+	fetched := 0
+	for _, post := range posts {
+		replies, ok := post.GetReplies()
+		if !ok || !replies.Comments || replies.Replies == 0 || time.Unix(int64(post.Date), 0).Before(since) {
+			continue
+		}
+		thread, err := tc.commentThreadForPost(ctx, channelID, post.ID)
+		if err != nil || thread == nil {
+			continue
+		}
+		if newest, ok := replies.GetMaxID(); ok {
+			if last, err := tc.lastMirroredComment(ctx, portal.MXID, thread.GroupID, thread.CopyID); err == nil && last >= newest {
+				continue
+			}
+		}
+		if err = tc.fetchPostComments(ctx, channelID, post.ID); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Int("post_id", post.ID).Msg("Failed to fetch new comments")
+			continue
+		}
+		fetched++
+	}
+	return fetched, true
 }
 
 // readExistingCommentThreads marks every comment thread mirrored so far read, once. Participation

@@ -592,6 +592,7 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 			case <-ctx.Done():
 			}
 		}()
+		go tc.pollCommentsInBackground(ctx)
 		// If takeout dialog sync is enabled, we assume it'll resume from a getTakeoutID call.
 		// If not, resume dialog sync manually here.
 		if !tc.isNewLogin && !tc.main.Config.Takeout.DialogSync && !tc.metadata.IsBot {

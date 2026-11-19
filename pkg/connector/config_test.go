@@ -29,7 +29,7 @@ func TestConfigUpgradeKeepsForkOptions(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(ExampleConfig), &base); err != nil {
 		t.Fatal(err)
 	}
-	if err := yaml.Unmarshal([]byte("max_initial_messages_override:\n    user: 300\n    saved: 1000\npersonal_channels: true\n"), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte("max_initial_messages_override:\n    user: 300\n    saved: 1000\npersonal_channels: true\nencrypted_direct_media: large\ncomment_poll:\n    background_minutes: 5\n"), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	upgradeConfig(up.NewHelper(&base, &cfg))
@@ -41,7 +41,8 @@ func TestConfigUpgradeKeepsForkOptions(t *testing.T) {
 	if err = yaml.Unmarshal(out, &parsed); err != nil {
 		t.Fatalf("upgraded config doesn't parse: %v\n%s", err, out)
 	}
-	if parsed.MaxInitialMessagesOverride["user"] != 300 || parsed.MaxInitialMessagesOverride["saved"] != 1000 || !parsed.PersonalChannels {
+	if parsed.MaxInitialMessagesOverride["user"] != 300 || parsed.MaxInitialMessagesOverride["saved"] != 1000 || !parsed.PersonalChannels ||
+		parsed.EncryptedDirectMedia != EncryptedDirectMediaLarge || parsed.CommentPoll.BackgroundMinutes != 5 || parsed.CommentPoll.OnReadSeconds != 60 {
 		t.Fatalf("options lost: %+v %v", parsed.MaxInitialMessagesOverride, parsed.PersonalChannels)
 	}
 

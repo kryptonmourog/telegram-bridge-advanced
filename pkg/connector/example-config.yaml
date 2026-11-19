@@ -172,6 +172,14 @@ personal_channels: false
 # Requires bridge.direct_media.enabled.
 # off - upload as usual; large - files of matrix.upload_file_threshold and larger; all - all of them.
 encrypted_direct_media: off
+# Comments of discussion groups the user isn't a member of don't arrive as updates, they're fetched.
+comment_poll:
+    # When the user reads a channel room, at most once per this many seconds per room.
+    on_read_seconds: 60
+    # In the background every this many minutes, for posts of the last background_hours hours.
+    # Only posts whose newest comment isn't in Matrix yet are fetched. 0 disables background polling.
+    background_minutes: 15
+    background_hours: 24
 # Files that aren't bridged: a notice with the file name, size and a link to Telegram is sent instead.
 # Each rule has a portal ID (e.g. channel:123, see the bridge database) and optionally a message ID
 # (e.g. 123.45) and/or a minimum size in megabytes.
