@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"maps"
 	"slices"
 	"strconv"
 	"sync"
@@ -1218,12 +1219,15 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 	if !ok {
 		return false, nil
 	}
+	// moveInto is set for a plain reply that becomes a comment: it's moved into the post's thread.
+	var moveInto id.EventID
 	if threadParent == "" {
 		// A plain reply to a post or a comment is a comment too when the user can't post in the
 		// channel: that's the only thing it can be on Telegram.
 		if threadParent = tc.replyAsCommentThread(ctx, msg, channelID); threadParent == "" {
 			return false, nil
 		}
+		moveInto = threadParent
 	}
 	// From here on the message is never sent as a channel post, which is what a thread reply would
 	// otherwise become.
@@ -1291,7 +1295,7 @@ func (tc *TelegramClient) maybeSendComment(ctx context.Context, msg *bridgev2.Ma
 			})
 		}
 	}
-	if err = tc.sendComment(ctx, thread, msg, send); err != nil {
+	if err = tc.sendComment(ctx, thread, msg, moveInto, send); err != nil {
 		if tgerr.Is(err, tg.ErrChatGuestSendForbidden) {
 			return true, tc.joinDiscussionNeededError(ctx, thread.GroupID, err)
 		}
@@ -1356,7 +1360,7 @@ func (tc *TelegramClient) joinDiscussionNeededError(ctx context.Context, groupID
 // sendComment sends a comment written in Matrix and records the Matrix event as its mirror. Telegram
 // can deliver the new comment as an update before the request returns; the comment lock keeps
 // mirrorComment from mirroring it back into the thread until the mirror is saved.
-func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread, msg *bridgev2.MatrixMessage, send func() (tg.UpdatesClass, error)) error {
+func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread, msg *bridgev2.MatrixMessage, moveInto id.EventID, send func() (tg.UpdatesClass, error)) error {
 	tc.comments.lock.Lock()
 	defer tc.comments.lock.Unlock()
 	updates, err := send()
@@ -1366,9 +1370,15 @@ func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread
 	if err = tc.markCommentParticipation(ctx, thread.GroupID, thread.CopyID); err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("Failed to save comment thread participation")
 	}
+	mirrorEvent := msg.Event.ID
+	if moveInto != "" {
+		if moved := tc.moveIntoThread(ctx, msg, moveInto); moved != "" {
+			mirrorEvent = moved
+		}
+	}
 	if newID := sentMessageID(updates); newID != 0 {
 		if err = tc.saveCommentMirror(ctx, commentMirror{
-			GroupID: thread.GroupID, MsgID: newID, CopyID: thread.CopyID, RoomID: msg.Portal.MXID, EventID: msg.Event.ID,
+			GroupID: thread.GroupID, MsgID: newID, CopyID: thread.CopyID, RoomID: msg.Portal.MXID, EventID: mirrorEvent,
 		}); err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to save sent comment")
 		}
@@ -1376,6 +1386,38 @@ func (tc *TelegramClient) sendComment(ctx context.Context, thread *commentThread
 		zerolog.Ctx(ctx).Warn().Msg("Telegram didn't return the ID of the sent comment, it may appear twice in the thread")
 	}
 	return nil
+}
+
+// moveIntoThread puts a plain reply that was sent as a comment into the post's thread, where comments
+// are, and removes it from the main timeline: Matrix can't move an event, so it's sent again in the
+// thread with the user's double puppet. It returns the new event, empty if it stayed where it was.
+func (tc *TelegramClient) moveIntoThread(ctx context.Context, msg *bridgev2.MatrixMessage, post id.EventID) id.EventID {
+	dp := tc.userLogin.User.DoublePuppet(ctx)
+	if dp == nil {
+		return ""
+	}
+	raw := maps.Clone(msg.Event.Content.Raw)
+	if raw == nil {
+		return ""
+	}
+	replyTo := msg.Content.RelatesTo.GetNonFallbackReplyTo()
+	raw["m.relates_to"] = map[string]any{
+		"rel_type":        event.RelThread,
+		"event_id":        post,
+		"is_falling_back": replyTo == post,
+		"m.in_reply_to":   map[string]any{"event_id": replyTo},
+	}
+	resp, err := dp.SendMessage(ctx, msg.Portal.MXID, msg.Event.Type, &event.Content{Raw: raw}, &bridgev2.MatrixSendExtra{Timestamp: time.Now()})
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to move comment into the post's thread")
+		return ""
+	}
+	if _, err = dp.SendMessage(ctx, msg.Portal.MXID, event.EventRedaction, &event.Content{
+		Parsed: &event.RedactionEventContent{Redacts: msg.Event.ID, Reason: "moved into the comments of the post"},
+	}, &bridgev2.MatrixSendExtra{Timestamp: time.Now()}); err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to remove the comment from the main timeline")
+	}
+	return resp.EventID
 }
 
 // sentMessageID finds the ID of a sent message in the updates Telegram returned.
