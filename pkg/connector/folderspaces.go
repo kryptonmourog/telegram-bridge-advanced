@@ -149,6 +149,8 @@ type folderSpaceManager struct {
 	archive archiveSet
 	// favouriteTagged holds pinned rooms already tagged as favourite in this run. Guarded by lock.
 	favouriteTagged map[id.RoomID]struct{}
+	// joinedSpaces holds spaces the user was made to join in this run. Guarded by lock.
+	joinedSpaces map[id.RoomID]struct{}
 
 	scheduleLock sync.Mutex
 	scheduled    bool
@@ -397,6 +399,8 @@ func (fs *folderSpaceManager) reconcile(ctx context.Context) error {
 		subspaceOf[i] = room
 		wantRoot[room] = fmt.Sprintf("%04d", i)
 	}
+
+	fs.ensureSpacesJoined(ctx, append([]id.RoomID{root}, subspaceOf...))
 
 	// 2. Sub-spaces of folders deleted in Telegram.
 	for folderID, room := range meta.Folders {
@@ -725,6 +729,32 @@ func (fs *folderSpaceManager) ensureRootSpace(ctx context.Context) (id.RoomID, e
 		return "", fmt.Errorf("failed to save root space ID: %w", err)
 	}
 	return room, nil
+}
+
+// ensureSpacesJoined makes the user join spaces they were only invited to. A space is joined with
+// double puppeting when it's created, but double puppeting may only start working later (e.g. once
+// the homeserver allows it for the user), and the invites would stay pending.
+func (fs *folderSpaceManager) ensureSpacesJoined(ctx context.Context, spaces []id.RoomID) {
+	if fs.tc.main.Bridge.Matrix.GetCapabilities().AutoJoinInvites {
+		return
+	}
+	doublePuppet := fs.tc.userLogin.User.DoublePuppet(ctx)
+	if doublePuppet == nil {
+		return
+	}
+	if fs.joinedSpaces == nil {
+		fs.joinedSpaces = make(map[id.RoomID]struct{})
+	}
+	for _, space := range spaces {
+		if _, ok := fs.joinedSpaces[space]; ok || space == "" {
+			continue
+		}
+		if err := doublePuppet.EnsureJoined(ctx, space); err != nil {
+			zerolog.Ctx(ctx).Err(err).Stringer("space_id", space).Msg("Failed to join space with double puppet")
+			continue
+		}
+		fs.joinedSpaces[space] = struct{}{}
+	}
 }
 
 // createSpace creates a space owned by the bridge bot and invites (or joins, with double puppeting) the user.
