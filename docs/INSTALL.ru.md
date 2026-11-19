@@ -116,6 +116,18 @@ matrix_bridge_mautrix_telegram_configuration_extension_yaml: |
     sync:
       update_limit: -1
       create_limit: -1
+    max_member_count: 1000
+    # Несколько пользователей: у каждого своя комната канала (включать до первого входа).
+    personal_channels: true
+    # Глубина истории по типам чатов (остальное — backfill.max_initial_messages).
+    max_initial_messages_override: {user: 300, saved: 1000}
+    # Файлы зашифрованных чатов по запросу (при включённом direct_media).
+    encrypted_direct_media: large
+    comment_poll: {on_read_seconds: 60, background_minutes: 15, background_hours: 24}
+    # Если Telegram доступен только через SOCKS5-прокси на сервере:
+    # proxy:
+    #   type: socks5
+    #   address: "172.17.0.1:10808"
   backfill:
     enabled: true
     max_initial_messages: 30
