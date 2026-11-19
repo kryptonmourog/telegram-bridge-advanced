@@ -1,5 +1,7 @@
 # Установка telegram-bridge-advanced
 
+**Русский** | [English](INSTALL.md)
+
 `telegram-bridge-advanced` — форк [mautrix-telegram](https://github.com/mautrix/telegram) (Go, bridgev2,
 основа `v0.2611.0`). Ставится и настраивается так же, как обычный mautrix-telegram, но:
 
@@ -61,7 +63,7 @@ v0.2611.0-adv.3   ← форк перенесён на новую версию m
 Подходит любой из способов:
 
 - **Готовый образ:** `ghcr.io/kryptonmourog/telegram-bridge-advanced:<версия>`
-  (если автор публикует образы; список — на странице пакета в GitHub).
+  (список — на странице пакета в GitHub).
 - **Сборка из исходников:**
   ```bash
   git clone https://github.com/kryptonmourog/telegram-bridge-advanced.git
@@ -222,8 +224,9 @@ Telegram ◄──► [мост] ── wss://matrix.example.org/_matrix/client/
 2. `docker-compose.yml` — как в варианте B, без внешней сети.
 
 **Сервер Matrix:**
-1. `wsproxy` (`dock.mau.dev/mautrix/wsproxy`) в сети Synapse, с переменными окружения:
-   `APPSERVICE_ID` (= `id` из `registration.yaml`), `AS_TOKEN`, `HS_TOKEN` (оттуда же).
+1. `wsproxy` в сети Synapse, с переменными окружения: `APPSERVICE_ID` (= `id` из `registration.yaml`),
+   `AS_TOKEN`, `HS_TOKEN` (оттуда же). Для шифрования — [wsproxy-fork](https://github.com/kryptonmourog/wsproxy-fork)
+   (`ghcr.io/kryptonmourog/wsproxy-fork`): upstream `dock.mau.dev/mautrix/wsproxy` отбрасывает to-device события.
 2. Копия `registration.yaml` для Synapse, в которой `url: http://<контейнер wsproxy>:29331`.
    Подключить её к Synapse (`app_service_config_files`; в плейбуке — `matrix_synapse_app_service_config_files`
    и `matrix_synapse_container_extra_arguments` с `--mount` файла).
@@ -260,9 +263,10 @@ network:
 федерационные media endpoint в HTTP-роутер моста. В websocket-режиме форк mautrix-go запускает этот HTTP-роутер
 параллельно с websocket событий.
 
-Если входящие соединения на сервер моста запрещены, используйте отдельный потоковый WSS-туннель. Рабочий пример
-с Chisel и Traefik лежит в `telegram-direct-media-deploy/`. Не передавайте большие файлы командой `http_proxy`
-основного websocket appservice: она буферизует тело ответа в памяти и кодирует бинарные данные в base64.
+Если входящие соединения на сервер моста запрещены, используйте отдельный потоковый WSS-туннель: его ставит роль
+`telegram_media_gateway` из [telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible)
+(Chisel и Traefik). Не передавайте большие файлы командой `http_proxy` основного websocket appservice: она
+буферизует тело ответа в памяти и кодирует бинарные данные в base64.
 
 ### C2. Прямой HTTPS до сервера моста
 

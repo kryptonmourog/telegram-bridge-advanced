@@ -27,11 +27,11 @@ organised gets lost on the way. The fork also covers setups where Telegram isn't
 
 ## Installation
 
-- Guide (in Russian for now): [docs/INSTALL.ru.md](docs/INSTALL.ru.md) — manual setup, the
-  matrix-docker-ansible-deploy role, the bridge on a separate server, the fork's settings.
+- Guide: [docs/INSTALL.md](docs/INSTALL.md) — manual setup, the matrix-docker-ansible-deploy role, the bridge on
+  a separate server, the fork's settings.
 - With matrix-docker-ansible-deploy: [telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible).
-- Image: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<version>`, e.g. `v0.2611.0-adv.1` (the version
-  scheme, updating and going back to upstream are in the guide).
+- Image: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<version>`, e.g. `v0.2611.0-adv.1` (the [version
+  scheme](docs/INSTALL.md#versions), updating and going back to upstream are in the guide).
 
 ## The project
 
