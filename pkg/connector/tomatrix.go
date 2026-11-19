@@ -865,10 +865,14 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		Logger()
 	useDirectMedia := tc.main.shouldUseDirectMediaForPortal(portal)
 	peerType, chatID, err := messageChat(portal, msg)
+	knownChat := err == nil
 	if err != nil {
 		log.Err(err).Msg("Failed to get the chat of the message, not using direct media")
 		useDirectMedia = false
 	}
+	// encryptedDirectSize is the size of a document that may be served on request in an encrypted room
+	// (encrypted_direct_media), 0 for media that has to be uploaded.
+	var encryptedDirectSize int64
 	eventType := event.EventMessage
 	var content event.MessageEventContent
 	var telegramMediaID int64
@@ -1118,6 +1122,10 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		mediaTransferer = transferer.
 			WithFilename(content.Body).
 			WithDocument(msgMedia.Document, false)
+		if !isSticker {
+			// Stickers may be converted, which doesn't give the same bytes every time.
+			encryptedDirectSize = document.Size
+		}
 	default:
 		converted = &bridgev2.ConvertedMessagePart{
 			Type: event.EventMessage,
@@ -1134,8 +1142,21 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 		if err != nil {
 			log.Err(err).Msg("Failed to create direct download URL for media")
 		}
+	} else if knownChat && encryptedDirectSize > 0 && tc.shouldUseEncryptedDirectMedia(ctx, portal, encryptedDirectSize) {
+		file, info, err := tc.encryptedDirectMediaFile(ctx, mediaTransferer, ids.DirectMediaInfo{
+			PeerType:  peerType,
+			PeerID:    chatID,
+			UserID:    tc.telegramUserID,
+			MessageID: int64(msgID),
+			ID:        telegramMediaID,
+		})
+		if err != nil {
+			log.Err(err).Msg("Failed to prepare encrypted direct media, uploading the file instead")
+		} else {
+			content.File, content.Info = file, info
+		}
 	}
-	if content.URL == "" {
+	if content.URL == "" && content.File == nil {
 		var expectedSize int64
 		if content.Info != nil {
 			expectedSize = int64(content.Info.Size)

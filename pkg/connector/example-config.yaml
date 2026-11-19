@@ -165,6 +165,13 @@ max_initial_messages_override: {}
 # Changing this doesn't move existing channel rooms: users get new rooms next to the old ones, so only
 # change it before channels are bridged (or after deleting their rooms).
 personal_channels: false
+# Files in encrypted rooms (documents and videos) served on request through direct media, encrypted with a
+# key kept by the bridge, instead of being uploaded when the message is bridged. Bridging still downloads
+# each file once to compute the hash clients check, but uploads nothing, so history fills up faster and
+# the homeserver only stores files that were opened. Old files then need the bridge and Telegram to open.
+# Requires bridge.direct_media.enabled.
+# off - upload as usual; large - files of matrix.upload_file_threshold and larger; all - all of them.
+encrypted_direct_media: off
 # Files that aren't bridged: a notice with the file name, size and a link to Telegram is sent instead.
 # Each rule has a portal ID (e.g. channel:123, see the bridge database) and optionally a message ID
 # (e.g. 123.45) and/or a minimum size in megabytes.

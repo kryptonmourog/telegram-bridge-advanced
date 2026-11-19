@@ -33,7 +33,7 @@ import (
 //
 // v|p|cccccccc|rrrrrrrr|mmmmmmmm|T|MMMMMMMM
 //
-// v (int8) = binary encoding format version. Should be 0.
+// v (int8) = binary encoding format version: 0, or 1 for media served encrypted (same layout).
 // p (byte) = the peer type of the Telegram chat ID
 // cccccccc (int64) = the Telegram peer ID (big endian)
 // rrrrrrrr (int64) = the Telegram user ID (big endian)
@@ -58,14 +58,26 @@ type DirectMediaInfo struct {
 
 	// Is this a thumbnail?
 	Thumbnail bool
+
+	// Encrypted media is served encrypted with the key stored for its media ID, for encrypted rooms.
+	Encrypted bool
 }
+
+const (
+	directMediaVersion          byte = 0
+	directMediaVersionEncrypted byte = 1
+)
 
 func (m DirectMediaInfo) AsMediaID() (networkid.MediaID, error) {
 	var mediaID networkid.MediaID
 	buf := &bytes.Buffer{}
 
 	// version byte
-	if err := binary.Write(buf, binary.BigEndian, byte(0)); err != nil {
+	version := directMediaVersion
+	if m.Encrypted {
+		version = directMediaVersionEncrypted
+	}
+	if err := binary.Write(buf, binary.BigEndian, version); err != nil {
 		return mediaID, err
 	}
 
@@ -98,9 +110,10 @@ func ParseDirectMediaInfo(mediaID networkid.MediaID) (info DirectMediaInfo, err 
 	var version byte
 	if err := binary.Read(buf, binary.BigEndian, &version); err != nil {
 		return info, err
-	} else if version != 0 {
+	} else if version != directMediaVersion && version != directMediaVersionEncrypted {
 		return info, fmt.Errorf("invalid version %d", version)
 	}
+	info.Encrypted = version == directMediaVersionEncrypted
 
 	// v0
 	var peerType byte

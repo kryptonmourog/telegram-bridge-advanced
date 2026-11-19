@@ -244,6 +244,20 @@ func (tc *TelegramConnector) Download(ctx context.Context, mediaID networkid.Med
 			WithDocument(customEmojiDocuments[0], false)
 	}
 
+	if info.Encrypted {
+		// Served encrypted with the key it was bridged with (encrypted_direct_media).
+		file, err := tc.getEncryptedMediaFile(ctx, mediaID)
+		if err != nil {
+			return nil, err
+		} else if file == nil {
+			return nil, mautrix.MNotFound.WithMessage("Encryption key for media not found")
+		}
+		resp, err := readyTransferer.ToEncryptedDirectMediaResponse(ctx, file)
+		if err != nil {
+			return nil, directMediaError(err)
+		}
+		return resp, nil
+	}
 	resp, err := readyTransferer.ToDirectMediaResponse(ctx)
 	if err != nil {
 		return nil, directMediaError(err)

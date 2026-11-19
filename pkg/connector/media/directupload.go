@@ -29,6 +29,7 @@ import (
 	"maunium.net/go/mautrix/crypto/attachment"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
+	"maunium.net/go/mautrix/mediaproxy"
 )
 
 // bridgev2 writes every file above the in-memory threshold to a temporary file (preallocated to the
@@ -102,6 +103,59 @@ func (t *ReadyTransferer) uploadDirectly(ctx context.Context, asIntent *matrix.A
 		return "", file, nil
 	}
 	return resp.ContentURI.CUString(), nil, nil
+}
+
+// Encrypted direct media: in encrypted rooms a file can be served on request like in channels instead
+// of being uploaded when the message is bridged. Clients check the hash of the encrypted file, which is
+// in the event, so the file is downloaded once when the message is bridged to compute it (nothing is
+// uploaded), and encrypted again with the same key when it's requested: AES-CTR with the same key and
+// IV turns the same file into the same bytes.
+
+// EncryptForDirectMedia downloads the file and encrypts it with a new key, only to compute the hash of
+// the encrypted file.
+func (t *ReadyTransferer) EncryptForDirectMedia(ctx context.Context) (*attachment.EncryptedFile, *event.FileInfo, error) {
+	reader, _, size, err := t.Stream(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("downloading file failed: %w", err)
+	}
+	file := attachment.NewEncryptedFile()
+	encrypting := file.EncryptStream(io.LimitReader(reader, int64(size)))
+	n, err := io.Copy(io.Discard, encrypting)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt file: %w", err)
+	} else if n != int64(size) {
+		return nil, nil, fmt.Errorf("file ended after %d of %d bytes", n, size)
+	}
+	// Closing fills in the hash.
+	if err = encrypting.Close(); err != nil {
+		return nil, nil, fmt.Errorf("failed to finish encrypting file: %w", err)
+	}
+	if t.inner.fileInfo.MimeType == "" {
+		t.inner.fileInfo.MimeType = "application/octet-stream"
+	}
+	return file, &t.inner.fileInfo, nil
+}
+
+// FileInfo is what's known about the file without downloading it.
+func (t *ReadyTransferer) FileInfo() *event.FileInfo {
+	if t.inner.fileInfo.MimeType == "" {
+		t.inner.fileInfo.MimeType = "application/octet-stream"
+	}
+	return &t.inner.fileInfo
+}
+
+// ToEncryptedDirectMediaResponse serves the file encrypted with the key it was bridged with.
+func (t *ReadyTransferer) ToEncryptedDirectMediaResponse(ctx context.Context, file *attachment.EncryptedFile) (mediaproxy.GetMediaResponse, error) {
+	reader, _, size, err := t.Stream(ctx)
+	if err != nil {
+		zerolog.Ctx(ctx).Err(err).Msg("Failed to download media")
+		return nil, err
+	}
+	return &mediaproxy.GetMediaResponseData{
+		Reader:        file.EncryptStream(io.LimitReader(reader, int64(size))),
+		ContentType:   "application/octet-stream",
+		ContentLength: int64(size),
+	}, nil
 }
 
 // defaultUploadSize is what bridgev2 assumes until it has fetched the homeserver's media config.
