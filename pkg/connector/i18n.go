@@ -574,6 +574,7 @@ var ruTranslations = map[string]string{
 	"An error occurred while processing an incoming %s": "Ошибка при обработке входящего события %s",
 	"Set the disappearing message timer to %s":          "Таймер исчезающих сообщений: %s",
 	"Room has been replaced.":                           "Комната заменена.",
+	"User is in the room with their own account":        "Пользователь в комнате под своим аккаунтом",
 	"This room has been merged":                         "Эта комната объединена с другой",
 
 	// Telegram errors (humanise), the most common ones
