@@ -317,3 +317,23 @@ func TestEffectiveMute(t *testing.T) {
 	assert.Equal(t, notifyChats, notifyKindOfPeer(&tg.PeerChannel{ChannelID: 2}, map[int64]tg.ChatClass{2: &tg.Channel{ID: 2, Megagroup: true}}))
 	assert.Equal(t, notifyUsers, notifyKindOfPeer(&tg.PeerUser{UserID: 3}, nil))
 }
+
+func TestFolderDefaultIcon(t *testing.T) {
+	people := map[string]struct{}{"user:1": {}}
+	for _, tc := range []struct {
+		folder folderDef
+		name   string
+	}{
+		{folderDef{Title: "Work", Emoticon: "💼", Groups: true}, "💼 Work"},
+		{folderDef{Title: "ЛС", Contacts: true, NonContacts: true}, "👤 ЛС"},
+		{folderDef{Title: "Чаты", Groups: true, ExcludeArchived: true}, "👥 Чаты"},
+		{folderDef{Title: "Каналы", Broadcasts: true}, "📢 Каналы"},
+		{folderDef{Title: "Боты", Bots: true}, "🤖 Боты"},
+		{folderDef{Title: "Новые", Contacts: true, Groups: true, ExcludeRead: true}, "✅ Новые"},
+		{folderDef{Title: "Selfhosting", Include: people}, "📁 Selfhosting"},
+		{folderDef{Title: "Боты+", Bots: true, Include: people}, "📁 Боты+"},
+		{folderDef{Title: "Shared", IsChatlist: true}, "📁 Shared"},
+	} {
+		assert.Equal(t, tc.name, tc.folder.SpaceName())
+	}
+}

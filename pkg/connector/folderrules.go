@@ -62,6 +62,9 @@ type folderDef struct {
 	Bots        bool
 	// ExcludeArchived is the "exclude archived" rule.
 	ExcludeArchived bool
+	// ExcludeRead and ExcludeMuted only pick the folder's default icon, see icon.
+	ExcludeRead  bool
+	ExcludeMuted bool
 
 	// Include contains pinned and included chats, Exclude the excluded ones (folderPeerID format).
 	Include map[string]struct{}
@@ -158,6 +161,8 @@ func buildFolderEntries(filters []tg.DialogFilterClass, selfID int64) []folderEn
 				Broadcasts:      filter.Broadcasts,
 				Bots:            filter.Bots,
 				ExcludeArchived: filter.ExcludeArchived,
+				ExcludeRead:     filter.ExcludeRead,
+				ExcludeMuted:    filter.ExcludeMuted,
 				Include:         folderPeerSet(selfID, filter.PinnedPeers, filter.IncludePeers),
 				Exclude:         folderPeerSet(selfID, filter.ExcludePeers),
 			}})
@@ -216,14 +221,41 @@ func (f *folderDef) IsPersonal() bool {
 	return f.Contacts || f.NonContacts
 }
 
-// SpaceName is the Matrix space name for the folder: "<emoji> <title>".
-func (f *folderDef) SpaceName() string {
-	if f.Emoticon != "" && f.Title != "" {
-		return f.Emoticon + " " + f.Title
-	} else if f.Title != "" {
-		return f.Title
+// icon is the folder's emoji: the one chosen in Telegram, or else the default icon Telegram apps show
+// for the folder, which isn't stored on the server. The default follows Telegram Desktop: by the chat
+// types when those are the only rules, otherwise a plain folder.
+func (f *folderDef) icon() string {
+	if f.Emoticon != "" {
+		return f.Emoticon
 	}
-	return f.Emoticon
+	if f.IsChatlist || len(f.Include) > 0 || len(f.Exclude) > 0 {
+		return "📁"
+	}
+	people := f.Contacts || f.NonContacts
+	switch {
+	case people && !f.Groups && !f.Broadcasts && !f.Bots:
+		return "👤"
+	case f.Groups && !people && !f.Broadcasts && !f.Bots:
+		return "👥"
+	case f.Broadcasts && !people && !f.Groups && !f.Bots:
+		return "📢"
+	case f.Bots && !people && !f.Groups && !f.Broadcasts:
+		return "🤖"
+	case f.ExcludeRead && !f.ExcludeMuted:
+		return "✅"
+	case f.ExcludeMuted && !f.ExcludeRead:
+		return "🔔"
+	}
+	return "📁"
+}
+
+// SpaceName is the Matrix space name for the folder: "<emoji> <title>". Clients show the first
+// character of the name as the space's picture.
+func (f *folderDef) SpaceName() string {
+	if f.Title == "" {
+		return f.icon()
+	}
+	return f.icon() + " " + f.Title
 }
 
 // folderChatFromEntities builds a folderChat from Telegram entities (used while syncing dialogs).
