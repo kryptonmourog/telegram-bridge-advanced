@@ -74,7 +74,12 @@ func FloodWait(ctx context.Context, err error, opts ...FloodWaitOption) (bool, e
 	if d, ok := AsFloodWait(err); ok && d < opt.maxDuration {
 		timer := opt.clock.Timer(d + 1*time.Second)
 		defer clock.StopTimer(timer)
-		zerolog.Ctx(ctx).Warn().Dur("duration", d).Msg("Waiting on flood wait")
+		// FLOOD_PREMIUM_WAIT limits the transfer speed of accounts without Premium, FLOOD_WAIT any request.
+		var errType string
+		if rpcErr, ok := As(err); ok {
+			errType = rpcErr.Type
+		}
+		zerolog.Ctx(ctx).Warn().Dur("duration", d).Str("error_type", errType).Msg("Waiting on flood wait")
 		select {
 		case <-timer.C():
 			return true, err
