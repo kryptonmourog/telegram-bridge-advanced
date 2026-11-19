@@ -1,52 +1,52 @@
 # telegram-bridge-advanced
 
-A fork of [mautrix-telegram](https://github.com/mautrix/telegram) (bridgev2) with features for people who
-live in Matrix and use Telegram heavily. Russian and English bot replies.
+**English** | [Русский](README.ru.md)
+
+An unofficial fork of [mautrix-telegram](https://github.com/mautrix/telegram), the Matrix ↔ Telegram bridge
+(bridgev2, Go). This is the main repository of the project: the bridge's code, its Docker images, the installation
+guide and the releases.
+
+## Why it exists
+
+It was made for people who move their Telegram life into Matrix and keep using Telegram the way they're used to:
+with folders, channel comments, polls and bots. Upstream bridges messages well, but much of how Telegram is
+organised gets lost on the way. The fork also covers setups where Telegram isn't reachable from the Matrix server
+(the bridge runs on another server and connects to Matrix by itself), and a home server shared by several people.
+
+## What it adds
 
 - Telegram folders as Matrix spaces, the archive, pinned chats, Telegram's notification defaults.
-- Channel comments as threads under posts: both ways (text and media), joining the discussion group,
-  comments fetched in the background for groups the user isn't in; replies to posts become comments.
-- Several users: a channel room per user, shared supergroups and forums, settings of shared rooms
-  for bridge admins only.
-- Polls both ways, bot buttons, rich posts, Telegram ads in a separate room, per-room settings
-  (`!tg settings`: media limit, pause, signatures, buttons), cleanup of rooms of left chats.
-- Encryption of private chats; direct media for channels and, encrypted, for private chats; large
-  files streamed without temporary files; history depth per chat type, history sent in chunks.
+- Channel comments as threads under posts, both ways (text and media), including discussion groups the user isn't
+  a member of; plain replies to a post become comments.
+- Several users of one bridge: a room of a channel per user, shared supergroups and forums, settings of shared
+  rooms changed by bridge admins only.
+- Polls both ways, bot buttons, rich posts, Telegram ads in a separate room, per-room settings (`!tg settings`:
+  media limit, pause, signatures, buttons), cleanup of rooms of left chats, Russian bot replies.
+- Encryption of private chats; direct media for channels and, encrypted, for private chats; large files
+  streamed without temporary files; history depth per chat type, history sent in chunks.
 
-Installation and settings: [docs/INSTALL.ru.md](docs/INSTALL.ru.md). With matrix-docker-ansible-deploy,
-including the bridge on a separate server:
-[telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible).
-Images: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<version>` (versions: `v<mautrix-telegram>-adv.<N>`).
-It depends on a fork of mautrix-go: [mautrix-go-fork](https://github.com/kryptonmourog/mautrix-go-fork).
+## Installation
 
-The rest of this README is upstream's.
+- Guide (in Russian for now): [docs/INSTALL.ru.md](docs/INSTALL.ru.md) — manual setup, the
+  matrix-docker-ansible-deploy role, the bridge on a separate server, the fork's settings.
+- With matrix-docker-ansible-deploy: [telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible).
+- Image: `ghcr.io/kryptonmourog/telegram-bridge-advanced:<version>`. Versions are
+  `v<mautrix-telegram version>-adv.<N>`, e.g. `v0.2611.0-adv.1`; `v0.2611.0-adv` is the latest release on that
+  base, `latest` the latest release.
 
----
+The database stays compatible with upstream: switching back to mautrix-telegram of the same version keeps the
+rooms and ignores the fork's extra tables. Rooms of channels made per user (`personal_channels`) are the
+exception: upstream doesn't know them and makes new shared ones.
 
-# mautrix-telegram
-![Languages](https://img.shields.io/github/languages/top/mautrix/telegram.svg)
-[![License](https://img.shields.io/github/license/mautrix/telegram.svg)](LICENSE)
-[![Release](https://img.shields.io/github/release/mautrix/telegram/all.svg)](https://github.com/mautrix/telegram/releases)
-[![GitLab CI](https://mau.dev/mautrix/telegram/badges/main/pipeline.svg)](https://mau.dev/mautrix/telegram/container_registry)
+## The project
 
-A Matrix-Telegram puppeting/relaybot bridge.
+| Repository | What it is |
+|---|---|
+| **telegram-bridge-advanced** (you are here) | the bridge itself: code, images, installation guide, releases |
+| [mautrix-go-fork](https://github.com/kryptonmourog/mautrix-go-fork) | the fork of mautrix-go the bridge is built with |
+| [wsproxy-fork](https://github.com/kryptonmourog/wsproxy-fork) | the websocket proxy for a bridge on a separate server, with encryption |
+| [telegram-bridge-advanced-ansible](https://github.com/kryptonmourog/telegram-bridge-advanced-ansible) | installation with matrix-docker-ansible-deploy, including on a separate server |
 
-## Sponsors
-* [Joel Lehtonen / Zouppen](https://github.com/zouppen)
+## License
 
-## Documentation
-All setup and usage instructions are located on
-[docs.mau.fi](https://docs.mau.fi/bridges/go/telegram/index.html).
-Some quick links:
-
-* [Bridge setup](https://docs.mau.fi/bridges/go/setup.html?bridge=telegram)
-  (or [with Docker](https://docs.mau.fi/bridges/general/docker-setup.html?bridge=telegram))
-* Basic usage: [Authentication](https://docs.mau.fi/bridges/go/telegram/authentication.html)
-
-### Features & Roadmap
-[ROADMAP.md](ROADMAP.md) contains a general overview of what is supported by the bridge.
-
-## Discussion
-Matrix room: [`#telegram:maunium.net`](https://matrix.to/#/#telegram:maunium.net)
-
-Telegram chat: [`mautrix_telegram`](https://t.me/mautrix_telegram) (bridged to Matrix room)
+AGPL-3.0, like mautrix-telegram. Upstream documentation: [docs.mau.fi](https://docs.mau.fi/bridges/go/telegram/index.html).
